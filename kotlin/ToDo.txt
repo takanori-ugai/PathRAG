@@ -1,0 +1,15 @@
+- Done: Entity/relationship extraction parity (LLM JSON parsing, node/edge upserts).
+- Done: Token-based chunking/truncation via JTokkit.
+- Done: Hybrid/local/global keyword extraction and context building with path relations.
+- Done: OpenAI retry/backoff and embedding-dimension config; in-memory cache with embedding-similarity hits.
+- Done: Path relations now scored with pagerank/edge-degree weighting; top paths used in context.
+- Done: Cache parity improvements: disk persistence, quantized embedding storage, and optional LLM similarity check on cache hits.
+- Done: Basic graph analytics added (pagerank, edge-degree weighting, node embedding via graph metadata).
+- Done: Prompt/config parity improved (language/keyword examples in config; similarity_check prompt configurable).
+
+Outstanding vs Python:
+- Graph analytics: node2vec embeddings remain stubbed (no graspologic.node2vec_embed or random-walk training); path selection still lacks full bfs_weighted_paths nuances.
+- Storage/persistence: KV/vector/graph backends are in-memory only; no file-backed persistence like Python storages.
+- Provider coverage: only OpenAI via LangChain4j; missing Azure/Bedrock/Ollama/vLLM/local backends and streaming parity.
+- Prompt/config parity: addon_params (language/entity types/example count) and some model/env knobs still not fully surfaced.
+- Entity/edge maintenance: delete/cleanup utilities and graph mutations need parity with Python helpers.
