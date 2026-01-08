@@ -14,6 +14,7 @@ import pathrag.operate.extractEntities
 import pathrag.operate.kgQuery
 import pathrag.storage.JsonKVStorage
 import pathrag.storage.NanoVectorDBStorage
+import pathrag.storage.Neo4jStorage
 import pathrag.storage.NetworkXStorage
 import pathrag.utils.ResponseCache
 import pathrag.utils.computeMdHashId
@@ -92,6 +93,7 @@ class PathRAG(
     private fun createGraphStorage(namespace: String): BaseGraphStorage =
         when (graphStorage) {
             "NetworkXStorage" -> NetworkXStorage(namespace, globalConfig(), embeddingFunc)
+            "Neo4jStorage" -> Neo4jStorage(namespace, globalConfig())
             else -> error("Unknown graph storage: $graphStorage")
         }
 
@@ -120,6 +122,8 @@ class PathRAG(
         )
 
     fun insert(stringOrStrings: Any) = runBlockingMaybe { ainsert(stringOrStrings) }
+
+    fun graph(): BaseGraphStorage = chunkEntityRelationGraph
 
     suspend fun ainsert(stringOrStrings: Any) {
         val inputs =
@@ -150,17 +154,22 @@ class PathRAG(
                 chunkMap[id] = chunk + mapOf("full_doc_id" to docKey)
             }
         }
-        chunksVdb.upsert(chunkMap)
-        chunkEntityRelationGraph =
-            extractEntities(
-                chunkMap,
-                chunkEntityRelationGraph,
-                entitiesVdb,
-                relationshipsVdb,
-                globalConfig(),
-            )
-        fullDocs.upsert(newDocs)
-        textChunks.upsert(chunkMap)
+        try {
+            chunksVdb.upsert(chunkMap)
+            chunkEntityRelationGraph =
+                extractEntities(
+                    chunkMap,
+                    chunkEntityRelationGraph,
+                    entitiesVdb,
+                    relationshipsVdb,
+                    globalConfig(),
+                )
+            fullDocs.upsert(newDocs)
+            textChunks.upsert(chunkMap)
+        } catch (e: Exception) {
+            logger.error(e) { "Failed to insert documents; embedding or storage update error occurred." }
+            throw e
+        }
     }
 
     fun insertCustomKg(customKg: Map<String, Any?>) = runBlockingMaybe { ainsertCustomKg(customKg) }
@@ -176,8 +185,13 @@ class PathRAG(
                 id to mapOf("content" to chunk["content"].toString(), "source_id" to chunk["source_id"].toString())
             }
         if (chunkData.isNotEmpty()) {
-            chunksVdb.upsert(chunkData)
-            textChunks.upsert(chunkData)
+            try {
+                chunksVdb.upsert(chunkData)
+                textChunks.upsert(chunkData)
+            } catch (e: Exception) {
+                logger.error(e) { "Failed to insert custom KG chunks; embedding or storage update error occurred." }
+                throw e
+            }
         }
 
         entities.forEach { entity ->

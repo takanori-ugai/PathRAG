@@ -1,5 +1,6 @@
 package pathrag.storage
 
+import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import pathrag.base.BaseGraphStorage
@@ -49,6 +50,7 @@ class NanoVectorDBStorage(
     private val embeddingFunc: EmbeddingFunc,
     private val metaFields: Set<String> = setOf("entity_name", "full_doc_id", "source_id"),
 ) : BaseVectorStorage(namespace, globalConfig) {
+    private val logger = KotlinLogging.logger("PathRAG-NanoVectorDBStorage")
     private val mutex = Mutex()
     private val entries = ConcurrentHashMap<String, StoredVector>()
 
@@ -64,7 +66,13 @@ class NanoVectorDBStorage(
     ): List<Map<String, Any?>> {
         if (entries.isEmpty()) return emptyList()
         if (query.isBlank()) return emptyList()
-        val queryEmbeddings = embeddingFunc(listOf(query))
+        val queryEmbeddings =
+            try {
+                embeddingFunc(listOf(query))
+            } catch (e: Exception) {
+                logger.error(e) { "Embedding generation failed during query in namespace '$namespace'." }
+                throw e
+            }
         if (queryEmbeddings.isEmpty()) return emptyList()
         val queryEmbedding = queryEmbeddings.first()
         return entries.values
@@ -80,7 +88,13 @@ class NanoVectorDBStorage(
         val contents = items.map { it.value["content"]?.toString().orEmpty() }
         val validPairs = items.zip(contents).filter { it.second.isNotBlank() }
         if (validPairs.isEmpty()) return
-        val embeddings = embeddingFunc(validPairs.map { it.second })
+        val embeddings =
+            try {
+                embeddingFunc(validPairs.map { it.second })
+            } catch (e: Exception) {
+                logger.error(e) { "Embedding generation failed during upsert in namespace '$namespace'." }
+                throw e
+            }
         mutex.withLock {
             embeddings.forEachIndexed { index, vector ->
                 val (entry, content) = validPairs[index]
@@ -100,7 +114,15 @@ class NanoVectorDBStorage(
     }
 
     override suspend fun deleteRelation(entityName: String) {
-        deleteEntity(entityName)
+        // Remove any relation vectors involving this entity (matches src_id or tgt_id in metadata)
+        mutex.withLock {
+            val toRemove =
+                entries.keys.filter { key ->
+                    val stored = entries[key]
+                    stored?.meta?.get("src_id") == entityName || stored?.meta?.get("tgt_id") == entityName
+                }
+            toRemove.forEach { entries.remove(it) }
+        }
     }
 
     private fun cosineSimilarity(
