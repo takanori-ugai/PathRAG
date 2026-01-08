@@ -20,12 +20,30 @@ If you don't know the answer, just say so. Do not make anything up.
 Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown.
 """
 
-    const val KEYWORDS_EXTRACTION = """Given the query, list both high-level and low-level keywords in JSON.
-Query: {query}
-Examples:
+    const val KEYWORDS_EXTRACTION = """---Role---
+You extract concise keywords from user queries.
+---Goal---
+Return high-level and low-level keywords as JSON arrays.
+---Language---
+Use {language}.
+---Input Query---
+{query}
+---Examples---
 {examples}
-Output keys: "high_level_keywords" and "low_level_keywords".
-The Output should be human text, not unicode characters. Keep the same language as Query.
+    ---Output Format---
+    { "high_level_keywords": [...], "low_level_keywords": [...] }
+    Only return JSON.
+    """
+
+    const val SIMILARITY_CHECK = """Please analyze the similarity between these two questions:
+
+Question 1: {original_prompt}
+Question 2: {cached_prompt}
+
+Please provide a similarity score between 0 and 1 directly:
+1. Whether these two questions are semantically similar
+2. Whether the answer to Question 2 can be used to answer Question 1
+Return only a number between 0-1, no extra text.
 """
 
     const val ENTITY_REL_JSON = """
