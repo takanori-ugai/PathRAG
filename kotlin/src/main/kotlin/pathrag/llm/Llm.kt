@@ -86,26 +86,26 @@ suspend fun openAiComplete(
             append(prompt)
         }
 
-    val result: String =
-        withContext(Dispatchers.IO) {
-            val maxAttempts = (System.getenv("OPENAI_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
-            val backoffMs = (System.getenv("OPENAI_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
-            var lastError: IllegalStateException? = null
-            repeat(maxAttempts) { attempt ->
-                try {
-                    return@withContext chatModel.chat(fullPrompt)
-                } catch (e: IllegalStateException) {
+    return withContext(Dispatchers.IO) {
+        val maxAttempts = (System.getenv("OPENAI_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
+        val backoffMs = (System.getenv("OPENAI_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
+        var lastError: IllegalStateException? = null
+        val result =
+            retryWithBackoff(
+                maxAttempts,
+                backoffMs,
+                operation = { chatModel.chat(fullPrompt) },
+                onError = { e: IllegalStateException, attempt: Int ->
                     lastError = e
                     logger.warn(e) { "OpenAI chat attempt ${attempt + 1} failed for model $modelName" }
-                    if (attempt < maxAttempts - 1) {
-                        delay(backoffMs)
-                    }
-                }
+                },
+            )
+        result
+            ?: run {
+                logger.error(lastError) { "OpenAI chat call failed after $maxAttempts attempts for model $modelName" }
+                Prompts.FAIL_RESPONSE
             }
-            logger.error(lastError) { "OpenAI chat call failed after $maxAttempts attempts for model $modelName" }
-            Prompts.FAIL_RESPONSE
-        }
-    return result
+    }
 }
 
 /**
@@ -150,19 +150,21 @@ suspend fun ollamaComplete(
         val maxAttempts = (System.getenv("OLLAMA_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
         val backoffMs = (System.getenv("OLLAMA_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
         var lastError: IllegalStateException? = null
-        repeat(maxAttempts) { attempt ->
-            try {
-                return@withContext chatModel.chat(fullPrompt)
-            } catch (e: IllegalStateException) {
-                lastError = e
-                logger.warn(e) { "Ollama chat attempt ${attempt + 1} failed for model $modelName" }
-                if (attempt < maxAttempts - 1) {
-                    delay(backoffMs)
-                }
+        val result =
+            retryWithBackoff(
+                maxAttempts,
+                backoffMs,
+                operation = { chatModel.chat(fullPrompt) },
+                onError = { e: IllegalStateException, attempt: Int ->
+                    lastError = e
+                    logger.warn(e) { "Ollama chat attempt ${attempt + 1} failed for model $modelName" }
+                },
+            )
+        result
+            ?: run {
+                logger.error(lastError) { "Ollama chat call failed after $maxAttempts attempts for model $modelName" }
+                Prompts.FAIL_RESPONSE
             }
-        }
-        logger.error(lastError) { "Ollama chat call failed after $maxAttempts attempts for model $modelName" }
-        Prompts.FAIL_RESPONSE
     }
 }
 
@@ -195,24 +197,28 @@ suspend fun openAiEmbedding(inputs: List<String>): List<DoubleArray> {
         val maxAttempts = (System.getenv("OPENAI_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
         val backoffMs = (System.getenv("OPENAI_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
         var lastError: IllegalStateException? = null
-        repeat(maxAttempts) { attempt ->
-            try {
-                val segments = sanitized.map { TextSegment.from(it) }
-                val response: Response<List<Embedding>> = embedModel.embedAll(segments)
-                return@withContext response.content().map { embedding ->
-                    val vector = embedding.vector()
-                    DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
-                }
-            } catch (e: IllegalStateException) {
-                lastError = e
-                logger.warn(e) { "OpenAI embedding attempt ${attempt + 1} failed for model $modelName" }
-                if (attempt < maxAttempts - 1) {
-                    delay(backoffMs)
-                }
+        val result =
+            retryWithBackoff(
+                maxAttempts,
+                backoffMs,
+                operation = {
+                    val segments = sanitized.map { TextSegment.from(it) }
+                    val response: Response<List<Embedding>> = embedModel.embedAll(segments)
+                    response.content().map { embedding ->
+                        val vector = embedding.vector()
+                        DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
+                    }
+                },
+                onError = { e: IllegalStateException, attempt: Int ->
+                    lastError = e
+                    logger.warn(e) { "OpenAI embedding attempt ${attempt + 1} failed for model $modelName" }
+                },
+            )
+        result
+            ?: run {
+                logger.error(lastError) { "OpenAI embedding call failed after $maxAttempts attempts for model $modelName" }
+                throw IllegalStateException("OpenAI embedding call failed after $maxAttempts attempts for model $modelName", lastError)
             }
-        }
-        logger.error(lastError) { "OpenAI embedding call failed after $maxAttempts attempts for model $modelName" }
-        throw IllegalStateException("OpenAI embedding call failed after $maxAttempts attempts for model $modelName", lastError)
     }
 }
 
@@ -238,24 +244,28 @@ suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
         val maxAttempts = (System.getenv("OLLAMA_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
         val backoffMs = (System.getenv("OLLAMA_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
         var lastError: IllegalStateException? = null
-        repeat(maxAttempts) { attempt ->
-            try {
-                val segments = sanitized.map { TextSegment.from(it) }
-                val response: Response<List<Embedding>> = embedModel.embedAll(segments)
-                return@withContext response.content().map { embedding ->
-                    val vector = embedding.vector()
-                    DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
-                }
-            } catch (e: IllegalStateException) {
-                lastError = e
-                logger.warn(e) { "Ollama embedding attempt ${attempt + 1} failed for model $modelName" }
-                if (attempt < maxAttempts - 1) {
-                    delay(backoffMs)
-                }
+        val result =
+            retryWithBackoff(
+                maxAttempts,
+                backoffMs,
+                operation = {
+                    val segments = sanitized.map { TextSegment.from(it) }
+                    val response: Response<List<Embedding>> = embedModel.embedAll(segments)
+                    response.content().map { embedding ->
+                        val vector = embedding.vector()
+                        DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
+                    }
+                },
+                onError = { e: IllegalStateException, attempt: Int ->
+                    lastError = e
+                    logger.warn(e) { "Ollama embedding attempt ${attempt + 1} failed for model $modelName" }
+                },
+            )
+        result
+            ?: run {
+                logger.error(lastError) { "Ollama embedding call failed after $maxAttempts attempts for model $modelName" }
+                throw IllegalStateException("Ollama embedding call failed after $maxAttempts attempts for model $modelName", lastError)
             }
-        }
-        logger.error(lastError) { "Ollama embedding call failed after $maxAttempts attempts for model $modelName" }
-        throw IllegalStateException("Ollama embedding call failed after $maxAttempts attempts for model $modelName", lastError)
     }
 }
 
@@ -296,6 +306,11 @@ private fun embeddingModelConfig(): Triple<String, Int, Int> {
                         1536
                     }
 
+                    modelName.contains("ada-002", ignoreCase = true) ||
+                        modelName.contains("text-embedding-ada", ignoreCase = true) -> {
+                        1536
+                    }
+
                     else -> {
                         logger.warn { "Unrecognized embedding model '$modelName'; using default dim $DEFAULT_EMBED_DIM" }
                         DEFAULT_EMBED_DIM
@@ -311,4 +326,25 @@ private fun embeddingModelConfig(): Triple<String, Int, Int> {
             Triple("openai", dim, ctx)
         }
     }
+}
+
+private suspend fun <T> retryWithBackoff(
+    maxAttempts: Int,
+    backoffMs: Long,
+    operation: suspend () -> T,
+    onError: (IllegalStateException, Int) -> Unit,
+): T? {
+    var lastError: IllegalStateException? = null
+    repeat(maxAttempts) { attempt ->
+        try {
+            return operation()
+        } catch (e: IllegalStateException) {
+            lastError = e
+            onError(e, attempt)
+            if (attempt < maxAttempts - 1 && backoffMs > 0) {
+                delay(backoffMs)
+            }
+        }
+    }
+    return null
 }

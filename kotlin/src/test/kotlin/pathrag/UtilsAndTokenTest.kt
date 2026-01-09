@@ -54,11 +54,9 @@ class UtilsAndTokenTest {
             var running = 0
             var peak = 0
             val worker: () -> Unit = {
-                runBlocking {
-                    if (++running > peak) peak = running
-                    delay(20)
-                    running--
-                }
+                if (++running > peak) peak = running
+                Thread.sleep(20)
+                running--
             }
             val limited = limiter(worker)
             val jobs =

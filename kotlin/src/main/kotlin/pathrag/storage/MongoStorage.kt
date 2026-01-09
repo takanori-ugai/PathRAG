@@ -13,6 +13,7 @@ import pathrag.base.BaseVectorStorage
 import pathrag.utils.EmbeddingFunc
 import pathrag.utils.computeMdHashId
 import pathrag.utils.computePagerankLocal
+import pathrag.utils.cosineSimilarity
 import pathrag.utils.log
 
 /**
@@ -23,8 +24,14 @@ class MongoKVStorage<T : Any>(
     override val globalConfig: Map<String, Any?>,
 ) : BaseKVStorage<T>(namespace, globalConfig),
     AutoCloseable {
-    private val client: MongoClient = MongoClient.create(globalConfig["mongo_uri"] as? String ?: "mongodb://localhost:27017")
-    private val database = client.getDatabase(globalConfig["mongo_database"] as? String ?: "pathrag")
+    private val mongoUri: String =
+        globalConfig["mongo_uri"] as? String
+            ?: error("MONGO_URI is required when using MongoDB storage (namespace=$namespace)")
+    private val mongoDatabase: String =
+        globalConfig["mongo_database"] as? String
+            ?: error("MONGO_DATABASE is required when using MongoDB storage (namespace=$namespace)")
+    private val client: MongoClient = MongoClient.create(mongoUri)
+    private val database = client.getDatabase(mongoDatabase)
     private val collection = database.getCollection<org.bson.Document>("${namespace}_kv")
 
     /**
@@ -95,17 +102,19 @@ class MongoKVStorage<T : Any>(
     override suspend fun upsert(data: Map<String, T>) {
         if (data.isEmpty()) return
         val opts = ReplaceOptions().upsert(true)
-        data.forEach { (id, value) ->
-            val doc =
-                when (value) {
-                    is Map<*, *> -> org.bson.Document(value.filterKeys { it != "_id" } as Map<String, Any?>)
+        val writes =
+            data.map { (id, value) ->
+                val doc =
+                    when (value) {
+                        is Map<*, *> -> org.bson.Document(value.filterKeys { it != "_id" } as Map<String, Any?>)
 
-                    else -> throw IllegalArgumentException(
-                        "MongoKVStorage only supports storing Map values. Got: ${value::class.simpleName}",
-                    )
-                }.append("_id", id)
-            collection.replaceOne(Filters.eq("_id", id), doc, opts)
-        }
+                        else -> throw IllegalArgumentException(
+                            "MongoKVStorage only supports storing Map values. Got: ${value::class.simpleName}",
+                        )
+                    }.append("_id", id)
+                ReplaceOneModel(Filters.eq("_id", id), doc, opts)
+            }
+        collection.bulkWrite(writes)
     }
 
     override suspend fun drop() {
@@ -123,8 +132,14 @@ class MongoVectorStorage(
     private val metaFields: Set<String> = setOf("entity_name", "full_doc_id", "source_id", "src_id", "tgt_id"),
 ) : BaseVectorStorage(namespace, globalConfig),
     AutoCloseable {
-    private val client: MongoClient = MongoClient.create(globalConfig["mongo_uri"] as? String ?: "mongodb://localhost:27017")
-    private val database = client.getDatabase(globalConfig["mongo_database"] as? String ?: "pathrag")
+    private val mongoUri: String =
+        globalConfig["mongo_uri"] as? String
+            ?: error("MONGO_URI is required when using MongoDB storage (namespace=$namespace)")
+    private val mongoDatabase: String =
+        globalConfig["mongo_database"] as? String
+            ?: error("MONGO_DATABASE is required when using MongoDB storage (namespace=$namespace)")
+    private val client: MongoClient = MongoClient.create(mongoUri)
+    private val database = client.getDatabase(mongoDatabase)
     private val collection = database.getCollection<org.bson.Document>("${namespace}_vector")
 
     /**
@@ -209,23 +224,6 @@ class MongoVectorStorage(
     override suspend fun drop() {
         collection.drop()
     }
-
-    private fun cosineSimilarity(
-        a: DoubleArray,
-        b: DoubleArray,
-    ): Double {
-        if (a.isEmpty() || b.isEmpty() || a.size != b.size) return 0.0
-        var dot = 0.0
-        var na = 0.0
-        var nb = 0.0
-        for (i in a.indices) {
-            dot += a[i] * b[i]
-            na += a[i] * a[i]
-            nb += b[i] * b[i]
-        }
-        val denom = kotlin.math.sqrt(na) * kotlin.math.sqrt(nb)
-        return if (denom == 0.0) 0.0 else dot / denom
-    }
 }
 
 /**
@@ -237,8 +235,14 @@ class MongoGraphStorage(
     private val embeddingFunc: EmbeddingFunc?,
 ) : BaseGraphStorage(namespace, globalConfig),
     AutoCloseable {
-    private val client: MongoClient = MongoClient.create(globalConfig["mongo_uri"] as? String ?: "mongodb://localhost:27017")
-    private val database = client.getDatabase(globalConfig["mongo_database"] as? String ?: "pathrag")
+    private val mongoUri: String =
+        globalConfig["mongo_uri"] as? String
+            ?: error("MONGO_URI is required when using MongoDB storage (namespace=$namespace)")
+    private val mongoDatabase: String =
+        globalConfig["mongo_database"] as? String
+            ?: error("MONGO_DATABASE is required when using MongoDB storage (namespace=$namespace)")
+    private val client: MongoClient = MongoClient.create(mongoUri)
+    private val database = client.getDatabase(mongoDatabase)
     private val nodeCollection = database.getCollection<org.bson.Document>("${namespace}_nodes")
     private val edgeCollection = database.getCollection<org.bson.Document>("${namespace}_edges")
 

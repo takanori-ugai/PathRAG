@@ -277,6 +277,10 @@ paths:
                     type: string
                   deleted_files:
                     type: integer
+        "401":
+          description: Unauthorized - Invalid or missing token
+        "500":
+          description: Internal Server Error
   /knowledge-graph/:
     get:
       summary: Get the knowledge graph

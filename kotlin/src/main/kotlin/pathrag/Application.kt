@@ -125,6 +125,13 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
             mongoUri = env["MONGO_URI"],
             mongoDatabase = env["MONGO_DATABASE"],
         )
+    if (kvStorage.contains("Mongo") || vectorStorage.contains("Mongo") || graphStorage.contains("Mongo")) {
+        val mongoUri = extraConfig.mongoUri
+        val mongoDb = extraConfig.mongoDatabase
+        if (mongoUri.isNullOrBlank() || mongoDb.isNullOrBlank()) {
+            logger.warn { "Mongo storage selected but MONGO_URI or MONGO_DATABASE is not configured; falling back to defaults." }
+        }
+    }
 
     val rag =
         PathRAG(

@@ -110,6 +110,26 @@ fun limitAsyncFuncCall(
 fun computeArgsHash(vararg args: Any?): String = computeMdHashId(args.toList().toString())
 
 /**
+ * Compute cosine similarity between two vectors with basic validation.
+ */
+fun cosineSimilarity(
+    a: DoubleArray,
+    b: DoubleArray,
+): Double {
+    if (a.isEmpty() || b.isEmpty() || a.size != b.size) return 0.0
+    var dot = 0.0
+    var na = 0.0
+    var nb = 0.0
+    for (i in a.indices) {
+        dot += a[i] * b[i]
+        na += a[i] * a[i]
+        nb += b[i] * b[i]
+    }
+    val denom = sqrt(na) * sqrt(nb)
+    return if (denom == 0.0) 0.0 else dot / denom
+}
+
+/**
  * Cached payload for persisted responses.
  *
  * @property argsHash hash of query args.
@@ -313,23 +333,6 @@ class ResponseCache(
             }
         }.onFailure { internalLogger.warn(it) { "Failed to load cache from $path" } }
     }
-}
-
-private fun cosineSimilarity(
-    a: DoubleArray,
-    b: DoubleArray,
-): Double {
-    if (a.isEmpty() || b.isEmpty() || a.size != b.size) return Double.NaN
-    var dot = 0.0
-    var na = 0.0
-    var nb = 0.0
-    for (i in a.indices) {
-        dot += a[i] * b[i]
-        na += a[i] * a[i]
-        nb += b[i] * b[i]
-    }
-    val denom = sqrt(na) * sqrt(nb)
-    return if (denom == 0.0) Double.NaN else dot / denom
 }
 
 private fun quantizeEmbedding(

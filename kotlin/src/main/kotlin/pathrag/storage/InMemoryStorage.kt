@@ -9,6 +9,7 @@ import pathrag.base.BaseVectorStorage
 import pathrag.utils.EmbeddingFunc
 import pathrag.utils.computeMdHashId
 import pathrag.utils.computePagerankLocal
+import pathrag.utils.cosineSimilarity
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
@@ -189,21 +190,6 @@ class NanoVectorDBStorage(
      */
     override suspend fun drop() {
         mutex.withLock { entries.clear() }
-    }
-
-    private fun cosineSimilarity(
-        a: DoubleArray,
-        b: DoubleArray,
-    ): Double {
-        if (a.size != b.size) {
-            logger.warn { "Cannot compute cosine similarity for vectors of different dimensions: ${a.size} vs ${b.size}" }
-            return 0.0
-        }
-        if (a.isEmpty()) return 0.0
-        val dot = a.zip(b).sumOf { it.first * it.second }
-        val normA = kotlin.math.sqrt(a.sumOf { it * it })
-        val normB = kotlin.math.sqrt(b.sumOf { it * it })
-        return if (normA == 0.0 || normB == 0.0) 0.0 else dot / (normA * normB)
     }
 }
 

@@ -83,7 +83,7 @@ private class FakeVectorStorage(
 
 private class FakeKVStorage(
     override val namespace: String,
-    private val records: Map<String, Map<String, Any>>,
+    private val records: Map<String, Map<String, Any>?>,
 ) : BaseKVStorage<Map<String, Any>>(namespace, emptyMap()) {
     override suspend fun allKeys(): List<String> = records.keys.toList()
 
@@ -186,6 +186,7 @@ class OperateTest {
                     llmModel = llm,
                     hashingKv = cache,
                 )
+            val callsAfterFirst = calls
             val second =
                 kgQuery(
                     query = "question",
@@ -198,6 +199,7 @@ class OperateTest {
                     llmModel = llm,
                     hashingKv = cache,
                 )
+            assertEquals(callsAfterFirst, calls, "LLM should not be called again on cache hit")
             val cached = cache.handleCache(computeArgsHash(param.mode, "question"), "question", param.mode)
             assertEquals(first, second)
             assertEquals(first, cached)
