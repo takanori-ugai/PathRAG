@@ -47,7 +47,7 @@ class Neo4jVectorStorage(
     private val vectorIndexName = "${nodeLabel}_EMBED_IDX"
 
     /**
-     * Close underlying Neo4j driver resources.
+     * Release Neo4j driver and associated resources.
      */
     override fun close() {
         driver.close()
@@ -56,12 +56,24 @@ class Neo4jVectorStorage(
     private suspend fun <T> read(block: (TransactionContext) -> T): T =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeRead { tx -> block(tx) } } }
 
-    private suspend fun <T> write(block: (TransactionContext) -> T): T =
+    /**
+         * Execute a write transaction against the Neo4j driver and return the block's result.
+         *
+         * The provided `block` is invoked with a `TransactionContext` inside a write transaction and its
+         * return value is propagated to the caller.
+         *
+         * @param block Lambda that performs operations within the write transaction using the `TransactionContext`.
+         * @return The value returned by `block`.
+         */
+        private suspend fun <T> write(block: (TransactionContext) -> T): T =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
     /**
-     * Query stored vectors, preferring the Neo4j vector index when present.
-     */
+     * Find the most relevant stored vectors for the given text, preferring a Neo4j vector index and falling back to client-side cosine scoring.
+     *
+     * @param query The text query to embed and search.
+     * @param topK Maximum number of results to return.
+     * @return A list of result maps, each containing `content`, `score`, and any persisted metadata fields; results are ordered by descending `score` and limited to `topK`.
     @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
         query: String,
@@ -103,7 +115,16 @@ class Neo4jVectorStorage(
     }
 
     /**
-     * Insert or update vectors and metadata.
+     * Insert or update vector nodes and their persisted metadata into the Neo4j store for this namespace.
+     *
+     * Processes the provided entries by embedding each non-blank `content`, ensuring (if possible) a vector index
+     * for the embedding dimension, and merging nodes by id with properties `content`, `embedding`, and the subset
+     * of metadata keys configured in `metaFields`.
+     *
+     * @param data Map from node id to a property map; each property map is expected to contain a `"content"` entry
+     *             (the text to embed) and may contain additional metadata fields which will be persisted only if
+     *             their keys are present in `metaFields`.
+     * @throws IllegalStateException if embedding the provided contents fails.
      */
     @Suppress("TooGenericExceptionCaught")
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
@@ -138,7 +159,11 @@ class Neo4jVectorStorage(
     }
 
     /**
-     * Delete vectors associated with an entity.
+     * Delete all vector nodes that belong to the given entity.
+     *
+     * Deletes nodes whose stored `id` equals the hash derived from `entityName` with the `ent-` prefix.
+     *
+     * @param entityName The entity's canonical name used to compute the hashed entity id to delete.
      */
     override suspend fun deleteEntity(entityName: String) {
         val entityId = computeMdHashId(entityName, prefix = "ent-")
@@ -146,7 +171,9 @@ class Neo4jVectorStorage(
     }
 
     /**
-     * Delete vectors for relationships touching the entity.
+     * Removes all relationship vector nodes that reference the given entity by matching `src_id` or `tgt_id`.
+     *
+     * @param entityName The entity identifier to match against nodes' `src_id` or `tgt_id`.
      */
     override suspend fun deleteRelation(entityName: String) {
         write { tx ->
@@ -158,7 +185,12 @@ class Neo4jVectorStorage(
     }
 
     /**
-     * Delete a specific relationship vector.
+     * Deletes the vector node representing the relationship between two entities.
+     *
+     * Removes any vector whose id equals the computed relation id for the pair or whose `src_id` and `tgt_id` properties match the provided ids.
+     *
+     * @param srcId The source entity id.
+     * @param tgtId The target entity id.
      */
     override suspend fun deleteRelationBetween(
         srcId: String,
@@ -174,7 +206,7 @@ class Neo4jVectorStorage(
     }
 
     /**
-     * Drop all vectors in this namespace.
+     * Deletes all vector nodes and their relationships for this storage namespace from Neo4j.
      */
     override suspend fun drop() {
         write { tx -> tx.run("MATCH (v:$nodeLabel) DETACH DELETE v") }

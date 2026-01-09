@@ -171,7 +171,14 @@ class PathRAG(
         val relationships: List<CustomKgRelationshipInput> = emptyList(),
     )
 
-    private fun createKvStorage(namespace: String): BaseKVStorage<Map<String, Any>> =
+    /**
+         * Create a key-value storage instance for the given namespace using the configured KV backend.
+         *
+         * @param namespace Namespace identifier used to scope stored entries.
+         * @return A configured `BaseKVStorage<Map<String, Any>>` for storing document maps.
+         * @throws IllegalStateException If the configured KV backend (`kvStorage`) is unknown.
+         */
+        private fun createKvStorage(namespace: String): BaseKVStorage<Map<String, Any>> =
         when (kvStorage) {
             "JsonKVStorage" -> JsonKVStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jKVStorage" -> Neo4jKVStorage(namespace, globalConfig())
@@ -179,7 +186,14 @@ class PathRAG(
             else -> error("Unknown kv storage: $kvStorage")
         }
 
-    private fun createVectorStorage(namespace: String): BaseVectorStorage =
+    /**
+         * Selects and creates a vector storage implementation for the provided namespace using the configured backend.
+         *
+         * @param namespace The namespace used to scope the vector storage (e.g., a logical database/collection prefix).
+         * @return A configured `BaseVectorStorage` implementation for the given namespace.
+         * @throws IllegalStateException If `vectorStorage` is not a recognized backend.
+         */
+        private fun createVectorStorage(namespace: String): BaseVectorStorage =
         when (vectorStorage) {
             "NanoVectorDBStorage" -> NanoVectorDBStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jVectorStorage" -> Neo4jVectorStorage(namespace, globalConfig(), embeddingFunc)
@@ -187,7 +201,14 @@ class PathRAG(
             else -> error("Unknown vector storage: $vectorStorage")
         }
 
-    private fun createGraphStorage(namespace: String): BaseGraphStorage =
+    /**
+         * Selects and constructs a graph storage implementation according to the configured `graphStorage` type.
+         *
+         * @param namespace Namespace/prefix used to initialize the selected graph storage.
+         * @return An instance of `BaseGraphStorage` corresponding to the configured storage type.
+         * @throws IllegalStateException If `graphStorage` is not a recognized storage identifier.
+         */
+        private fun createGraphStorage(namespace: String): BaseGraphStorage =
         when (graphStorage) {
             "NetworkXStorage" -> NetworkXStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jStorage" -> Neo4jStorage(namespace, globalConfig())
@@ -202,11 +223,24 @@ class PathRAG(
     private val relationshipsVdb: BaseVectorStorage = createVectorStorage("relationships_vdb")
     private val chunksVdb: BaseVectorStorage = createVectorStorage("chunks_vdb")
 
-    private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extraConfig.toMap())
+    /**
+ * Compose the runtime global configuration by merging the stored snapshot with additional configuration.
+ *
+ * The returned map contains the snapshot's keys combined with entries from `extraConfig`; keys present
+ * in `extraConfig` override those from the snapshot.
+ *
+ * @return A map of configuration keys to values representing the merged global configuration.
+ */
+private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extraConfig.toMap())
 
     /**
-     * Insert documents synchronously by delegating to [ainsert].
-     */
+ * Insert one or more documents into the store synchronously.
+ *
+ * The `stringOrStrings` argument may be a single document `String` or a collection of `String`s;
+ * the input is normalized to one or more document texts and ingested into the system.
+ *
+ * @param stringOrStrings A single document string or a collection of document strings to insert.
+ */
     fun insert(stringOrStrings: Any) = runBlockingMaybe { ainsert(stringOrStrings) }
 
     /**
@@ -215,7 +249,12 @@ class PathRAG(
     fun graph(): BaseGraphStorage = chunkEntityRelationGraph
 
     /**
-     * Asynchronously insert documents, chunk them, extract entities, and populate storage.
+     * Insert one or more documents: chunk their text, extract entities and relationships, and persist
+     * documents, chunks, entity nodes, and relationship vectors into the configured storages.
+     *
+     * @param stringOrStrings A single `String` or a `Collection` of `String` values to insert. Any other
+     * value is treated as empty input and no action is taken.
+     * @throws IllegalStateException If embedding generation or any storage upsert fails during insertion.
      */
     @Suppress("TooGenericExceptionCaught")
     suspend fun ainsert(stringOrStrings: Any) {
@@ -268,16 +307,34 @@ class PathRAG(
     }
 
     /**
-     * Insert a pre-built knowledge graph payload synchronously via [ainsertCustomKg].
-     */
+ * Insert a pre-built custom knowledge graph payload into the PathRAG storages synchronously.
+ *
+ * @param customKg The payload containing chunks, entities, and relationships to upsert.
+ */
     fun insertCustomKg(customKg: CustomKgPayload) = runBlockingMaybe { ainsertCustomKg(customKg) }
 
+    /**
+     * Accepts a legacy Map-based custom knowledge graph payload, converts it to a strongly-typed payload, and upserts its chunks, entities, and relationships into storage.
+     *
+     * The map is expected to contain keys "chunks", "entities", and "relationships" with values structured like:
+     * - "chunks": List of maps with keys "content" (String) and optional "sourceId" (String)
+     * - "entities": List of maps with keys "entityName" (String), optional "entityType" (String), optional "description" (String), and optional "sourceId" (String)
+     * - "relationships": List of maps with keys "srcId" (String), "tgtId" (String), and optional "description" (String), "keywords" (String), "weight" (Number), and "sourceId" (String)
+     *
+     * @param customKg A legacy Map representation of a custom KG payload matching the structure described above.
+     */
     @Suppress("DEPRECATION")
     @Deprecated("Use insertCustomKg(CustomKgPayload) instead")
     fun insertCustomKg(customKg: Map<String, Any?>) = runBlockingMaybe { ainsertCustomKg(customKg.toCustomKgPayload()) }
 
     /**
-     * Asynchronously upsert user-provided entities/relationships and chunk metadata.
+     * Upserts the provided custom knowledge-graph payload into chunk, entity, and relationship stores.
+     *
+     * Processes chunks, entities, and relationships from the payload and persists them into the configured
+     * vector, KV, and graph storages.
+     *
+     * @param customKg Payload containing lists of chunks, entity inputs, and relationship inputs to upsert.
+     * @throws IllegalStateException if chunk upsertion fails due to an embedding or storage error.
      */
     suspend fun ainsertCustomKg(customKg: CustomKgPayload) {
         val chunks = customKg.chunks
@@ -327,17 +384,42 @@ class PathRAG(
         }
     }
 
+    /**
+     * Convert this input into a CustomKgEntity when the input has a non-blank name.
+     *
+     * Trims `entityName` and returns `null` if the resulting name is blank; otherwise returns a
+     * CustomKgEntity populated from this input's `entityName`, `entityType`, `description`, and `sourceId`.
+     *
+     * @return `CustomKgEntity` built from this input, or `null` if the trimmed `entityName` is blank.
+     */
     private fun CustomKgEntityInput.toCustomEntity(): CustomKgEntity? {
         val name = entityName.trim().takeIf { it.isNotBlank() } ?: return null
         return CustomKgEntity(name, entityType, description, sourceId)
     }
 
+    /**
+     * Converts this input into a validated CustomKgRelationship.
+     *
+     * Returns a CustomKgRelationship when both source and target IDs are present (non-blank after trimming); otherwise returns `null`.
+     *
+     * @return A `CustomKgRelationship` built from this input if valid, `null` if either source or target ID is missing or blank.
+     */
     private fun CustomKgRelationshipInput.toCustomRelationship(): CustomKgRelationship? {
         val src = srcId.trim().takeIf { it.isNotBlank() } ?: return null
         val tgt = tgtId.trim().takeIf { it.isNotBlank() } ?: return null
         return CustomKgRelationship(src, tgt, description, keywords, weight, sourceId)
     }
 
+    /**
+     * Converts a generic map-like payload into a CustomKgPayload.
+     *
+     * Parses optional "chunks", "entities", and "relationships" entries from the receiver when it is a Map.
+     * - Chunks with blank or missing "content" are ignored.
+     * - Entities require a non-blank "entity_name"; missing fields default to empty strings.
+     * - Relationships require non-blank "src_id" and "tgt_id"; "weight" is parsed as a Double and defaults to 1.0 on parse failure.
+     *
+     * @return A CustomKgPayload containing parsed chunks, entities, and relationships. Returns an empty payload when the receiver is not a Map or no valid items are present.
+     */
     private fun Any?.toCustomKgPayload(): CustomKgPayload {
         val map = this as? Map<*, *> ?: return CustomKgPayload()
         val chunkList =
@@ -389,8 +471,12 @@ class PathRAG(
     }
 
     /**
-     * Execute a query synchronously using the configured RAG mode.
-     */
+         * Run a retrieval-augmented generation (RAG) query and return the model's response.
+         *
+         * @param query The user query or prompt text to execute against the knowledge graph and LLM.
+         * @param param Additional query options (e.g., retrieval limits, filters, or response formatting).
+         * @return The generated response text for the given query.
+         */
     fun query(
         query: String,
         param: QueryParam = QueryParam(),
@@ -400,7 +486,11 @@ class PathRAG(
         }
 
     /**
-     * Execute a query asynchronously using the configured RAG mode.
+     * Run a query against the knowledge graph and retrieval stores using the configured RAG mode and produce a textual response.
+     *
+     * @param query The user query to execute.
+     * @param param Additional query options and controls (e.g., result limits, filters, and retrieval settings).
+     * @return The generated response text for the given query.
      */
     suspend fun aquery(
         query: String,
@@ -422,12 +512,18 @@ class PathRAG(
     }
 
     /**
-     * Delete an entity and its relationships synchronously.
-     */
+ * Delete the entity with the given name and all of its relationships synchronously.
+ *
+ * @param entityName The name or identifier of the entity to delete; comparison is case-insensitive and the name is normalized to uppercase.
+ */
     fun deleteByEntity(entityName: String) = runBlockingMaybe { adeleteByEntity(entityName) }
 
     /**
-     * Delete an entity and its relationships asynchronously.
+     * Remove the named entity and all its relationships from the graph and associated vector stores.
+     *
+     * The provided `entityName` is normalized by trimming surrounding double quotes and uppercasing before deletion.
+     *
+     * @param entityName The entity identifier to delete (quotes will be trimmed; comparison is case-insensitive).
      */
     suspend fun adeleteByEntity(entityName: String) {
         val key = entityName.trim('"').uppercase()
@@ -438,7 +534,13 @@ class PathRAG(
     }
 
     /**
-     * Delete an edge synchronously.
+     * Remove the relationship between two entities from the graph and its associated vector entry.
+     *
+     * This call normalizes both identifiers to uppercase before deletion; it removes the relationship
+     * record from the relationships vector store and deletes the corresponding edge from the graph.
+     *
+     * @param srcId Source entity identifier (will be normalized to uppercase).
+     * @param tgtId Target entity identifier (will be normalized to uppercase).
      */
     fun deleteEdge(
         srcId: String,
@@ -446,7 +548,14 @@ class PathRAG(
     ) = runBlockingMaybe { adeleteEdge(srcId, tgtId) }
 
     /**
-     * Delete an edge asynchronously.
+     * Remove the relationship edge between two entities identified by source and target IDs.
+     *
+     * Source and target identifiers are normalized by trimming surrounding double quotes and converting to uppercase;
+     * the relationship is removed from the relationships vector store and from the chunk-entity graph, and an informational
+     * message is logged.
+     *
+     * @param srcId The source entity identifier (may include surrounding quotes).
+     * @param tgtId The target entity identifier (may include surrounding quotes).
      */
     suspend fun adeleteEdge(
         srcId: String,
@@ -460,12 +569,16 @@ class PathRAG(
     }
 
     /**
-     * Clean up dangling edges and isolated nodes synchronously.
-     */
+ * Remove dangling edges and isolated nodes from the graph and corresponding vector stores.
+ *
+ * @return A map containing removal counts: `"removed_edges"` -> number of edges removed, `"removed_nodes"` -> number of nodes removed.
+ */
     fun cleanupGraph(): Map<String, Int> = runBlockingMaybe { acleanupGraph() }
 
     /**
-     * Clean up dangling edges and isolated nodes asynchronously.
+     * Remove edges that reference missing nodes and delete nodes with zero degree from the graph.
+     *
+     * @return A map with keys `removed_edges` and `removed_nodes` whose values are the counts of edges and nodes removed, respectively.
      */
     suspend fun acleanupGraph(): Map<String, Int> {
         var removedEdges = 0
@@ -501,7 +614,9 @@ class PathRAG(
     fun dropGraph() = runBlockingMaybe { adropGraph() }
 
     /**
-     * Drop the graph and associated vector stores asynchronously.
+     * Remove the graph storage and its associated entity and relationship vector stores.
+     *
+     * Drops the chunk-entity-relationship graph and the entities and relationships vector databases, and logs an informational message on completion.
      */
     suspend fun adropGraph() {
         chunkEntityRelationGraph.drop()
@@ -516,7 +631,12 @@ class PathRAG(
     fun dropAll() = runBlockingMaybe { adropAll() }
 
     /**
-     * Drop all storage namespaces asynchronously.
+     * Remove all internal PathRAG storages.
+     *
+     * Attempts to drop each configured storage namespace (text chunks, full documents,
+     * chunk-entity-relationship graph, entities vector, relationships vector, and chunks vector).
+     * Failures for individual stores are logged and do not stop the method from attempting
+     * to drop the remaining stores.
      */
     suspend fun adropAll() {
         runCatching { textChunks.drop() }.onFailure { ex -> logger.warn(ex) { "Failed to drop textChunks KV" } }
@@ -529,7 +649,12 @@ class PathRAG(
     }
 
     /**
-     * Upsert a single entity synchronously.
+     * Synchronously upserts an entity into the graph and entity vector stores.
+     *
+     * @param entityName The name of the entity; used as the entity key (normalized).
+     * @param description Optional human-readable description for the entity.
+     * @param entityType Optional entity type label; defaults to "UNKNOWN".
+     * @param sourceId Optional source identifier to associate with the entity for provenance.
      */
     fun upsertEntity(
         entityName: String,
@@ -539,7 +664,12 @@ class PathRAG(
     ) = runBlockingMaybe { aupsertEntity(entityName, description, entityType, sourceId) }
 
     /**
-     * Upsert a single entity asynchronously.
+     * Upserts or creates an entity node in the graph and a corresponding vector entry in the entity vector store.
+     *
+     * @param entityName The name or identifier of the entity to upsert.
+     * @param description A textual description stored as the entity's vector content.
+     * @param entityType A category or type label for the entity (defaults to "UNKNOWN").
+     * @param sourceId Optional provenance or source identifier associated with the entity.
      */
     suspend fun aupsertEntity(
         entityName: String,
@@ -586,7 +716,21 @@ class PathRAG(
     ) = runBlockingMaybe { aupsertEdge(srcId, tgtId, description, keywords, weight, sourceId) }
 
     /**
-     * Upsert an edge asynchronously.
+     * Upserts an edge between two entities in the graph and creates or updates its corresponding relationship vector.
+     *
+     * The entity identifiers are normalized (trimmed of quoting and uppercased) before upsertion. The graph edge is
+     * stored with metadata including `weight`, `description`, `keywords`, and `source_id`. A relationship vector entry
+     * is created/updated with `src_id`, `tgt_id`, concatenated `content` (description + keywords), `keywords`,
+     * `description`, and `source_id`.
+     *
+     * Failures during graph or vector upsertion are logged and do not propagate exceptions.
+     *
+     * @param srcId The source entity identifier.
+     * @param tgtId The target entity identifier.
+     * @param description Optional text describing the relationship.
+     * @param keywords Optional keywords associated with the relationship.
+     * @param weight Numeric weight for the relationship (default is 1.0).
+     * @param sourceId Optional provenance identifier; when omitted a default placeholder is used in stored metadata.
      */
     suspend fun aupsertEdge(
         srcId: String,
@@ -626,6 +770,12 @@ class PathRAG(
         logger.info { "Edge '$srcKey' -> '$tgtKey' upserted." }
     }
 
+    /**
+     * Releases resources used by PathRAG by closing any underlying storage components.
+     *
+     * Closes the configured storage components (fullDocs, textChunks, chunkEntityRelationGraph,
+     * entitiesVdb, relationshipsVdb, chunksVdb) when they implement `AutoCloseable`.
+     */
     override fun close() {
         listOf(
             fullDocs,

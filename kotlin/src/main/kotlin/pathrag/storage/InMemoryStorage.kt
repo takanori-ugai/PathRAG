@@ -25,17 +25,25 @@ class JsonKVStorage<T : Any>(
     private val data = ConcurrentHashMap<String, T>()
 
     /**
-     * Return all stored keys.
-     */
+ * Lists all stored keys.
+ *
+ * @return A list of all keys currently stored.
+ */
     override suspend fun allKeys(): List<String> = data.keys().toList()
 
     /**
-     * Fetch a value by id.
-     */
+ * Retrieve the value associated with the given id.
+ *
+ * @return The value for `id` if present, or `null` if no entry exists.
+ */
     override suspend fun getById(id: String): T? = data[id]
 
     /**
-     * Fetch multiple values by ids.
+     * Retrieve stored values for the given ids in the same order as provided.
+     *
+     * @param ids The identifiers to fetch.
+     * @param fields Optional set of field names to project; currently ignored and full objects are returned.
+     * @return A list where each element is the value corresponding to the id at the same index, or `null` if that id is not present.
      */
     override suspend fun getByIds(
         ids: List<String>,
@@ -43,7 +51,10 @@ class JsonKVStorage<T : Any>(
     ): List<T?> = ids.map { data[it] }
 
     /**
-     * Identify which ids are not already stored.
+     * Determine which identifiers from the provided list are not present in storage.
+     *
+     * @param data The list of identifiers to check for presence in the store.
+     * @return The set of identifiers from `data` that are not currently stored.
      */
     override suspend fun filterKeys(data: List<String>): Set<String> {
         val existing = allKeys().toSet()
@@ -51,7 +62,9 @@ class JsonKVStorage<T : Any>(
     }
 
     /**
-     * Insert or update values.
+     * Inserts or updates the provided key-value pairs in the storage atomically.
+     *
+     * @param data Map of keys to values to insert or update.
      */
     override suspend fun upsert(data: Map<String, T>) {
         mutex.withLock {
@@ -60,7 +73,7 @@ class JsonKVStorage<T : Any>(
     }
 
     /**
-     * Remove all stored values.
+     * Clears all entries from the storage.
      */
     override suspend fun drop() {
         mutex.withLock { data.clear() }
@@ -94,7 +107,20 @@ class NanoVectorDBStorage(
     )
 
     /**
-     * Query vectors by similarity using embeddings generated for the query text.
+     * Finds stored vectors most similar to the provided text query.
+     *
+     * Returns an ordered list of up to `topK` result maps. Each result contains:
+     * - `"content"`: the stored content string,
+     * - `"score"`: the cosine similarity score as a `Double`,
+     * - plus all key/value pairs from the stored metadata.
+     *
+     * Returns an empty list if there are no stored entries, if `query` is blank,
+     * or if embedding generation produces no vectors.
+     *
+     * @param query Text to embed and use for similarity search.
+     * @param topK Maximum number of results to return.
+     * @return A list of result maps sorted by descending `"score"`.
+     * @throws IllegalStateException If embedding generation fails.
      */
     @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
@@ -121,8 +147,13 @@ class NanoVectorDBStorage(
     }
 
     /**
-     * Insert or update vectors with metadata.
-     */
+     * Insert or update vectors and their metadata into the vector store.
+     *
+     * Accepts a map of entry id to a property map that must include a "content" value; entries with missing or blank "content" are ignored.
+     * For each kept entry this generates an embedding (via the storage's embedding function) and stores the embedding, the content string, and the entry's metadata filtered by `metaFields`.
+     *
+     * @param data Map from entry id to a map of properties; the property "content" is used as the text to embed and other keys are considered metadata.
+     * @throws IllegalStateException If embedding generation fails.
     @Suppress("TooGenericExceptionCaught")
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
         val items = data.entries.toList()
@@ -148,7 +179,9 @@ class NanoVectorDBStorage(
     }
 
     /**
-     * Delete all vectors related to an entity.
+     * Remove the stored vector entry associated with the given entity.
+     *
+     * @param entityName The entity identifier used to compute the stored entry key (prefixed with "ent-").
      */
     override suspend fun deleteEntity(entityName: String) {
         val entityId = computeMdHashId(entityName, prefix = "ent-")
@@ -158,7 +191,12 @@ class NanoVectorDBStorage(
     }
 
     /**
-     * Delete relation vectors that reference the entity.
+     * Remove stored relation vectors whose metadata references the given entity.
+     *
+     * Matches entries where the metadata key "src_id" or "tgt_id" equals the provided `entityName`
+     * and removes those entries while holding the storage mutex.
+     *
+     * @param entityName The entity identifier to match against relation metadata (`src_id` or `tgt_id`).
      */
     override suspend fun deleteRelation(entityName: String) {
         // Remove any relation vectors involving this entity (matches src_id or tgt_id in metadata)
@@ -173,7 +211,10 @@ class NanoVectorDBStorage(
     }
 
     /**
-     * Delete a specific relationship vector.
+     * Remove the stored vector representing a relation between two entities.
+     *
+     * @param srcId Identifier of the source entity participating in the relation.
+     * @param tgtId Identifier of the target entity participating in the relation.
      */
     override suspend fun deleteRelationBetween(
         srcId: String,
@@ -186,7 +227,7 @@ class NanoVectorDBStorage(
     }
 
     /**
-     * Drop the entire vector namespace.
+     * Remove all stored vectors and associated metadata from this namespace.
      */
     override suspend fun drop() {
         mutex.withLock { entries.clear() }
@@ -207,12 +248,19 @@ class NetworkXStorage(
     private var cachedPagerank: Map<String, Double>? = null
 
     /**
-     * Check whether a node exists.
-     */
+ * Determine whether a node with the given identifier exists in the graph.
+ *
+ * @param nodeId The node identifier to check.
+ * @return `true` if a node with the given identifier exists, `false` otherwise.
+ */
     override suspend fun hasNode(nodeId: String): Boolean = nodes.containsKey(nodeId)
 
     /**
-     * Check whether an edge exists.
+     * Determine whether an edge from one node to another exists.
+     *
+     * @param sourceNodeId Identifier of the source node.
+     * @param targetNodeId Identifier of the target node.
+     * @return `true` if an edge from `sourceNodeId` to `targetNodeId` exists, `false` otherwise.
      */
     override suspend fun hasEdge(
         sourceNodeId: String,
@@ -220,12 +268,16 @@ class NetworkXStorage(
     ): Boolean = edges.containsKey(sourceNodeId to targetNodeId)
 
     /**
-     * Compute degree for a node.
-     */
+ * Get the number of edges connected to the given node.
+ *
+ * @return The count of edges where the node is either the source or the target.
+ */
     override suspend fun nodeDegree(nodeId: String): Int = edges.keys.count { it.first == nodeId || it.second == nodeId }
 
     /**
-     * Compute degree for a specific edge.
+     * Determine whether a specific directed edge exists.
+     *
+     * @return `1` if the edge exists, `0` otherwise.
      */
     override suspend fun edgeDegree(
         srcId: String,
@@ -233,12 +285,19 @@ class NetworkXStorage(
     ): Int = if (edges.containsKey(srcId to tgtId)) 1 else 0
 
     /**
-     * Fetch node properties.
-     */
+ * Retrieve a copy of the properties for the node with the given id.
+ *
+ * @param nodeId Identifier of the node to fetch.
+ * @return A map containing the node's properties if the node exists, or `null` if it does not.
+ */
     override suspend fun getNode(nodeId: String): Map<String, Any?>? = nodes[nodeId]?.toMap()
 
     /**
-     * Fetch edge properties.
+     * Retrieve a copy of properties for the edge from sourceNodeId to targetNodeId.
+     *
+     * @param sourceNodeId Source node identifier.
+     * @param targetNodeId Target node identifier.
+     * @return A map of edge properties, or `null` if the edge does not exist.
      */
     override suspend fun getEdge(
         sourceNodeId: String,
@@ -246,13 +305,22 @@ class NetworkXStorage(
     ): Map<String, Any?>? = edges[sourceNodeId to targetNodeId]?.toMap()
 
     /**
-     * List all edges touching a node.
-     */
+         * List all edges that include the given node.
+         *
+         * @param sourceNodeId The node identifier to search for.
+         * @return A list of pairs `(sourceId, targetId)` for each edge where the node is either the source or the target.
+         */
     override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
         edges.keys.filter { it.first == sourceNodeId || it.second == sourceNodeId }
 
     /**
-     * Insert or update a node.
+     * Upserts a node's properties into the graph and invalidates the cached PageRank.
+     *
+     * Merges the provided properties into any existing properties for the node; keys in `nodeData`
+     * overwrite existing keys. Also clears the stored PageRank cache so it will be recomputed when needed.
+     *
+     * @param nodeId The identifier of the node to insert or update.
+     * @param nodeData A map of properties to merge into the node; values may be `null` to represent absent properties.
      */
     override suspend fun upsertNode(
         nodeId: String,
@@ -267,7 +335,13 @@ class NetworkXStorage(
     }
 
     /**
-     * Insert or update an edge.
+     * Insert or update properties for the edge from sourceNodeId to targetNodeId.
+     *
+     * Merges the provided `edgeData` into existing edge properties (overwriting any matching keys) or creates the edge if it does not exist. Resets the cached PageRank so ranks will be recomputed on next request.
+     *
+     * @param sourceNodeId Identifier of the source node.
+     * @param targetNodeId Identifier of the target node.
+     * @param edgeData Map of edge property names to values; existing properties with the same keys are overwritten.
      */
     override suspend fun upsertEdge(
         sourceNodeId: String,
@@ -283,7 +357,9 @@ class NetworkXStorage(
     }
 
     /**
-     * Delete a node and attached edges.
+     * Remove the node identified by [nodeId] and all edges connected to it, and invalidate cached PageRank.
+     *
+     * @param nodeId Identifier of the node to remove.
      */
     override suspend fun deleteNode(nodeId: String) {
         mutex.withLock {
@@ -294,7 +370,10 @@ class NetworkXStorage(
     }
 
     /**
-     * Delete an edge.
+     * Removes the directed edge from sourceNodeId to targetNodeId and invalidates the cached PageRank.
+     *
+     * @param sourceNodeId Identifier of the source node.
+     * @param targetNodeId Identifier of the target node.
      */
     override suspend fun deleteEdge(
         sourceNodeId: String,
@@ -307,17 +386,25 @@ class NetworkXStorage(
     }
 
     /**
-     * List node identifiers.
-     */
+ * Retrieves all node identifiers present in the graph.
+ *
+ * @return A list of node identifiers.
+ */
     override suspend fun nodes(): List<String> = nodes.keys().toList()
 
     /**
-     * List edges as pairs.
-     */
+ * Return all stored edges as a list of (sourceNodeId, targetNodeId) pairs.
+ *
+ * @return A list containing a pair for each edge where the first element is the source node id and the second is the target node id.
+ */
     override suspend fun edges(): List<Pair<String, String>> = edges.keys.toList()
 
     /**
-     * Retrieve cached or computed PageRank.
+     * Get the PageRank score for a node.
+     *
+     * Uses a cached PageRank mapping when available; computes and caches PageRank otherwise.
+     *
+     * @return The PageRank score for the given node identifier, or `0.0` if the node is not present.
      */
     override suspend fun getPagerank(nodeId: String): Double {
         val ranks =
@@ -328,8 +415,12 @@ class NetworkXStorage(
     }
 
     /**
-     * Embed nodes using metadata or node2vec.
-     */
+     * Produce embeddings for all nodes using the specified algorithm.
+     *
+     * If `algorithm` equals `"node2vec"` (case-insensitive) Node2Vec-based embeddings are produced; any other value falls back to metadata-based embeddings.
+     *
+     * @param algorithm The embedding algorithm name (`"node2vec"` or other to select metadata embedding).
+     * @return A pair where the first element is a flattened DoubleArray of embeddings (concatenated per-node vectors) and the second element is the list of node IDs in the same order as the embeddings.
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         val labels = nodes.keys().toList()
         if (labels.isEmpty()) return DoubleArray(0) to emptyList()
