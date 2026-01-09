@@ -16,11 +16,11 @@ fun main() =
         val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
         val graphStorage = env["GRAPH_STORAGE"] ?: "Neo4jStorage"
         val neo4jConfig =
-            mapOf(
-                "neo4j_uri" to env["NEO4J_URI"],
-                "neo4j_user" to env["NEO4J_USER"],
-                "neo4j_password" to env["NEO4J_PASSWORD"],
-            ).filterValues { !it.isNullOrBlank() }
+            pathrag.base.ExtraConfig(
+                neo4jUri = env["NEO4J_URI"],
+                neo4jUser = env["NEO4J_USER"],
+                neo4jPassword = env["NEO4J_PASSWORD"],
+            )
         val rag =
             PathRAG(
                 workingDir = env["WORKING_DIR"] ?: "./sample_cache_neo4j",
@@ -41,9 +41,9 @@ fun main() =
                         "use_llm_check" to false,
                     ),
                 addonParams =
-                    mapOf(
-                        "entity_types" to listOf("organization", "person", "geo", "event", "category"),
-                        "example_number" to 3,
+                    pathrag.base.AddonParams(
+                        entityTypes = listOf("organization", "person", "geo", "event", "category"),
+                        exampleNumber = 3,
                     ),
             )
 

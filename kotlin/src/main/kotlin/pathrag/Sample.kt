@@ -37,10 +37,10 @@ fun main() =
                         "use_llm_check" to false,
                     ),
                 addonParams =
-                    mapOf(
-                        "entity_types" to listOf("organization", "person", "geo", "event", "category"),
+                    pathrag.base.AddonParams(
+                        entityTypes = listOf("organization", "person", "geo", "event", "category"),
                         // language is set at top-level already
-                        "example_number" to 3,
+                        exampleNumber = 3,
                     ),
             )
 

@@ -117,17 +117,14 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
     val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
     val chunkTokenSize = env.chunkTokenSize()
     val chunkOverlapTokenSize = env.chunkOverlapTokenSize()
-    val neo4jConfig =
-        mapOf(
-            "neo4j_uri" to env["NEO4J_URI"],
-            "neo4j_user" to env["NEO4J_USER"],
-            "neo4j_password" to env["NEO4J_PASSWORD"],
-        ).filterValues { !it.isNullOrBlank() }
-    val mongoConfig =
-        mapOf(
-            "mongo_uri" to env["MONGO_URI"],
-            "mongo_database" to env["MONGO_DATABASE"],
-        ).filterValues { !it.isNullOrBlank() }
+    val extraConfig =
+        pathrag.base.ExtraConfig(
+            neo4jUri = env["NEO4J_URI"],
+            neo4jUser = env["NEO4J_USER"],
+            neo4jPassword = env["NEO4J_PASSWORD"],
+            mongoUri = env["MONGO_URI"],
+            mongoDatabase = env["MONGO_DATABASE"],
+        )
 
     val rag =
         PathRAG(
@@ -137,7 +134,7 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
             graphStorage = graphStorage,
             chunkTokenSize = chunkTokenSize,
             chunkOverlapTokenSize = chunkOverlapTokenSize,
-            extraConfig = neo4jConfig + mongoConfig,
+            extraConfig = extraConfig,
         )
     val userRepository = UserRepository(Paths.get(workingDir, "users.json"))
     val chatRepository = ChatRepository(Paths.get(workingDir, "chats.json"))
@@ -956,6 +953,26 @@ class DocumentRepository(
             }
         }
     }
+
+    /**
+     * Delete all document records and uploaded files.
+     */
+    suspend fun dropAll(): Int {
+        ensureLoaded()
+        val deletedCount =
+            withContext(Dispatchers.IO) {
+                val files = File(uploadDir).listFiles().orEmpty()
+                val deleted = files.count { runCatching { it.delete() }.getOrDefault(false) }
+                if (deleted < files.size) {
+                    logger.warn { "Deleted $deleted/${files.size} files in $uploadDir" }
+                }
+                documents.clear()
+                nextId = 1
+                deleted
+            }
+        persist()
+        return deletedCount
+    }
 }
 
 /**
@@ -1305,6 +1322,13 @@ private fun Route.documentRoutes(
         }
         post("/reload") {
             call.respond(mapOf("message" to "Reload request accepted. PathRAG will recognize new documents."))
+        }
+        post("/drop") {
+            call.withAuthenticatedUser(userRepository) {
+                val deletedFiles = repository.dropAll()
+                runCatching { rag.dropAll() }.onFailure { ex -> logger.warn(ex) { "Failed to drop PathRAG storages" } }
+                call.respond(mapOf("message" to "All documents and storages dropped", "deleted_files" to deletedFiles))
+            }
         }
     }
 }

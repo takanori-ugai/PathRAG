@@ -62,6 +62,7 @@ class Neo4jVectorStorage(
     /**
      * Query stored vectors, preferring the Neo4j vector index when present.
      */
+    @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
         query: String,
         topK: Int,
@@ -70,7 +71,7 @@ class Neo4jVectorStorage(
         val embeddings =
             try {
                 embeddingFunc(listOf(query))
-            } catch (e: Exception) {
+            } catch (e: IllegalStateException) {
                 logger.error(e) { "Failed to embed query for Neo4jVectorStorage ($namespace)" }
                 throw e
             }
@@ -104,6 +105,7 @@ class Neo4jVectorStorage(
     /**
      * Insert or update vectors and metadata.
      */
+    @Suppress("TooGenericExceptionCaught")
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
         if (data.isEmpty()) return
         val items = data.entries.toList()
@@ -113,7 +115,7 @@ class Neo4jVectorStorage(
         val embeddings =
             try {
                 embeddingFunc(valid.map { it.second })
-            } catch (e: Exception) {
+            } catch (e: IllegalStateException) {
                 logger.error(e) { "Failed to embed content for Neo4jVectorStorage ($namespace)" }
                 throw e
             }

@@ -134,6 +134,7 @@ class MongoVectorStorage(
         client.close()
     }
 
+    @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
         query: String,
         topK: Int,
@@ -142,7 +143,7 @@ class MongoVectorStorage(
         val embeddings =
             try {
                 embeddingFunc(listOf(query))
-            } catch (e: Exception) {
+            } catch (e: IllegalStateException) {
                 log().warn(e) { "Embedding generation failed for query in MongoVectorStorage ($namespace)" }
                 return emptyList()
             }

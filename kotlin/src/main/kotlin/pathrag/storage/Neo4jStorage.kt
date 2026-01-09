@@ -290,6 +290,7 @@ class Neo4jStorage(
         }
     }
 
+    @Suppress("TooGenericExceptionCaught")
     private suspend fun runNode2VecGds(dim: Int): Pair<DoubleArray, List<String>> =
         withContext(Dispatchers.IO) {
             val labels = mutableListOf<String>()
@@ -324,7 +325,7 @@ class Neo4jStorage(
                         Unit
                     }
                 }
-            } catch (ex: Exception) {
+            } catch (ex: IllegalStateException) {
                 logger.warn(ex) { "Neo4j node2vec failed; falling back to pagerank/degree." }
                 return@withContext computeFallbackEmbeddings()
             } finally {

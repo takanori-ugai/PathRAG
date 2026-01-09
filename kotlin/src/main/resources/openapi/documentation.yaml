@@ -259,6 +259,24 @@ paths:
       responses:
         "200":
           description: OK
+  /documents/drop:
+    post:
+      summary: Drop all documents and backend storages
+      tags: [Documents]
+      security:
+        - bearerAuth: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  deleted_files:
+                    type: integer
   /knowledge-graph/:
     get:
       summary: Get the knowledge graph

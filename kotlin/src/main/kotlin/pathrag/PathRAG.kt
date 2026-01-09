@@ -2,9 +2,12 @@ package pathrag
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.runBlocking
+import pathrag.base.AddonParams
 import pathrag.base.BaseGraphStorage
 import pathrag.base.BaseKVStorage
 import pathrag.base.BaseVectorStorage
+import pathrag.base.ExtraConfig
+import pathrag.base.GlobalConfig
 import pathrag.base.QueryParam
 import pathrag.base.runBlockingMaybe
 import pathrag.llm.defaultEmbeddingFunc
@@ -60,13 +63,13 @@ class PathRAG(
             ?.map { it.trim() }
             ?.filter { it.isNotBlank() }
             ?: emptyList(),
-    private val addonParams: Map<String, Any?> =
-        mapOf(
-            "entity_types" to (System.getenv("ENTITY_TYPES")?.split(",")?.map { it.trim() } ?: emptyList<String>()),
-            "language" to language, // follow top-level language
-            "example_number" to (System.getenv("KEYWORD_EXAMPLE_COUNT")?.toIntOrNull() ?: 3),
+    private val addonParams: AddonParams =
+        AddonParams(
+            entityTypes = System.getenv("ENTITY_TYPES")?.split(",")?.map { it.trim() } ?: emptyList(),
+            language = language, // follow top-level language
+            exampleNumber = System.getenv("KEYWORD_EXAMPLE_COUNT")?.toIntOrNull() ?: 3,
         ),
-    private val extraConfig: Map<String, Any?> = emptyMap(),
+    private val extraConfig: ExtraConfig = ExtraConfig(),
 ) : AutoCloseable {
     private val logger = KotlinLogging.logger("PathRAG")
     private val llmProvider: String = System.getenv("LLM_PROVIDER")?.lowercase() ?: "openai"
@@ -106,6 +109,23 @@ class PathRAG(
             }
         }
 
+    private val globalConfigSnapshot =
+        GlobalConfig(
+            workingDir = workingDir,
+            embeddingFunc = embeddingFunc,
+            llmModelFunc = llmModelFunc,
+            chunkTokenSize = chunkTokenSize,
+            chunkOverlapTokenSize = chunkOverlapTokenSize,
+            language = language,
+            keywordsExamples = keywordExamples,
+            embeddingCacheConfig = embeddingCacheConfig,
+            addonParams = addonParams,
+            llmModelName = llmModelName,
+            similarityCheckPrompt = similarityCheckPrompt,
+            fixedHighLevelKeywords = highLevelKeywords,
+            fixedLowLevelKeywords = lowLevelKeywords,
+        )
+
     private val llmResponseCache = ResponseCache(globalConfig())
 
     private data class CustomKgEntity(
@@ -115,6 +135,18 @@ class PathRAG(
         val sourceId: String,
     )
 
+    data class CustomKgChunk(
+        val content: String,
+        val sourceId: String? = null,
+    )
+
+    data class CustomKgEntityInput(
+        val entityName: String,
+        val entityType: String = "UNKNOWN",
+        val description: String = "",
+        val sourceId: String = "",
+    )
+
     private data class CustomKgRelationship(
         val srcId: String,
         val tgtId: String,
@@ -122,6 +154,21 @@ class PathRAG(
         val keywords: String,
         val weight: Double,
         val sourceId: String,
+    )
+
+    data class CustomKgRelationshipInput(
+        val srcId: String,
+        val tgtId: String,
+        val description: String = "",
+        val keywords: String = "",
+        val weight: Double = 1.0,
+        val sourceId: String = "",
+    )
+
+    data class CustomKgPayload(
+        val chunks: List<CustomKgChunk> = emptyList(),
+        val entities: List<CustomKgEntityInput> = emptyList(),
+        val relationships: List<CustomKgRelationshipInput> = emptyList(),
     )
 
     private fun createKvStorage(namespace: String): BaseKVStorage<Map<String, Any>> =
@@ -155,22 +202,7 @@ class PathRAG(
     private val relationshipsVdb: BaseVectorStorage = createVectorStorage("relationships_vdb")
     private val chunksVdb: BaseVectorStorage = createVectorStorage("chunks_vdb")
 
-    private fun globalConfig(): Map<String, Any?> =
-        mapOf(
-            "working_dir" to workingDir,
-            "embedding_func" to embeddingFunc,
-            "llm_model_func" to llmModelFunc,
-            "chunk_token_size" to chunkTokenSize,
-            "chunk_overlap_token_size" to chunkOverlapTokenSize,
-            "language" to language,
-            "keywords_examples" to keywordExamples,
-            "embedding_cache_config" to embeddingCacheConfig,
-            "addon_params" to addonParams,
-            "llm_model_name" to llmModelName,
-            "similarity_check_prompt" to similarityCheckPrompt,
-            "fixed_high_level_keywords" to highLevelKeywords,
-            "fixed_low_level_keywords" to lowLevelKeywords,
-        ).plus(extraConfig)
+    private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extraConfig.toMap())
 
     /**
      * Insert documents synchronously by delegating to [ainsert].
@@ -185,6 +217,7 @@ class PathRAG(
     /**
      * Asynchronously insert documents, chunk them, extract entities, and populate storage.
      */
+    @Suppress("TooGenericExceptionCaught")
     suspend fun ainsert(stringOrStrings: Any) {
         val inputs =
             when (stringOrStrings) {
@@ -228,7 +261,7 @@ class PathRAG(
                 )
             fullDocs.upsert(newDocs)
             textChunks.upsert(chunkMap)
-        } catch (e: Exception) {
+        } catch (e: IllegalStateException) {
             logger.error(e) { "Failed to insert documents; embedding or storage update error occurred." }
             throw e
         }
@@ -237,33 +270,31 @@ class PathRAG(
     /**
      * Insert a pre-built knowledge graph payload synchronously via [ainsertCustomKg].
      */
-    fun insertCustomKg(customKg: Map<String, Any?>) = runBlockingMaybe { ainsertCustomKg(customKg) }
+    fun insertCustomKg(customKg: CustomKgPayload) = runBlockingMaybe { ainsertCustomKg(customKg) }
+
+    @Suppress("DEPRECATION")
+    @Deprecated("Use insertCustomKg(CustomKgPayload) instead")
+    fun insertCustomKg(customKg: Map<String, Any?>) = runBlockingMaybe { ainsertCustomKg(customKg.toCustomKgPayload()) }
 
     /**
      * Asynchronously upsert user-provided entities/relationships and chunk metadata.
      */
-    suspend fun ainsertCustomKg(customKg: Map<String, Any?>) {
-        val chunks = (customKg["chunks"] as? List<Map<String, Any?>>).orEmpty()
-        val entities =
-            (customKg["entities"] as? List<Map<String, Any?>>)
-                ?.mapNotNull { it.toCustomEntity() }
-                .orEmpty()
-        val relationships =
-            (customKg["relationships"] as? List<Map<String, Any?>>)
-                ?.mapNotNull { it.toCustomRelationship() }
-                .orEmpty()
+    suspend fun ainsertCustomKg(customKg: CustomKgPayload) {
+        val chunks = customKg.chunks
+        val entities = customKg.entities.mapNotNull { it.toCustomEntity() }
+        val relationships = customKg.relationships.mapNotNull { it.toCustomRelationship() }
 
         val chunkData =
             chunks.associate { chunk ->
-                val content = (chunk["content"] as? String)?.trim().orEmpty()
+                val content = chunk.content.trim()
                 val id = computeMdHashId(content, prefix = "chunk-")
-                id to mapOf("content" to content, "source_id" to chunk["source_id"].toString())
+                id to mapOf("content" to content, "source_id" to chunk.sourceId.orEmpty())
             }
         if (chunkData.isNotEmpty()) {
             try {
                 chunksVdb.upsert(chunkData)
                 textChunks.upsert(chunkData)
-            } catch (e: Exception) {
+            } catch (e: IllegalStateException) {
                 logger.error(e) { "Failed to insert custom KG chunks; embedding or storage update error occurred." }
                 throw e
             }
@@ -296,26 +327,65 @@ class PathRAG(
         }
     }
 
-    private fun Map<String, Any?>.toCustomEntity(): CustomKgEntity? {
-        val name = this["entity_name"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        val type = this["entity_type"]?.toString().orEmpty()
-        val desc = this["description"]?.toString().orEmpty()
-        val sourceId = this["source_id"]?.toString().orEmpty()
-        return CustomKgEntity(name, type, desc, sourceId)
+    private fun CustomKgEntityInput.toCustomEntity(): CustomKgEntity? {
+        val name = entityName.trim().takeIf { it.isNotBlank() } ?: return null
+        return CustomKgEntity(name, entityType, description, sourceId)
     }
 
-    private fun Map<String, Any?>.toCustomRelationship(): CustomKgRelationship? {
-        val src = this["src_id"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        val tgt = this["tgt_id"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: return null
-        val desc = this["description"]?.toString().orEmpty()
-        val keywords = this["keywords"]?.toString().orEmpty()
-        val weight =
-            this["weight"]
-                ?.toString()
-                ?.toDoubleOrNull()
-                ?: 1.0
-        val sourceId = this["source_id"]?.toString().orEmpty()
-        return CustomKgRelationship(src, tgt, desc, keywords, weight, sourceId)
+    private fun CustomKgRelationshipInput.toCustomRelationship(): CustomKgRelationship? {
+        val src = srcId.trim().takeIf { it.isNotBlank() } ?: return null
+        val tgt = tgtId.trim().takeIf { it.isNotBlank() } ?: return null
+        return CustomKgRelationship(src, tgt, description, keywords, weight, sourceId)
+    }
+
+    private fun Any?.toCustomKgPayload(): CustomKgPayload {
+        val map = this as? Map<*, *> ?: return CustomKgPayload()
+        val chunkList =
+            (map["chunks"] as? List<*>)
+                ?.mapNotNull { item ->
+                    (item as? Map<*, *>)?.let { chunk ->
+                        val content = chunk["content"]?.toString()?.trim().orEmpty()
+                        if (content.isBlank()) null else CustomKgChunk(content, chunk["source_id"]?.toString())
+                    }
+                }.orEmpty()
+        val entities =
+            (map["entities"] as? List<*>)
+                ?.mapNotNull { item ->
+                    (item as? Map<*, *>)?.let { ent ->
+                        val name = ent["entity_name"]?.toString()?.trim().orEmpty()
+                        if (name.isBlank()) {
+                            null
+                        } else {
+                            CustomKgEntityInput(
+                                entityName = name,
+                                entityType = ent["entity_type"]?.toString().orEmpty(),
+                                description = ent["description"]?.toString().orEmpty(),
+                                sourceId = ent["source_id"]?.toString().orEmpty(),
+                            )
+                        }
+                    }
+                }.orEmpty()
+        val relationships =
+            (map["relationships"] as? List<*>)
+                ?.mapNotNull { item ->
+                    (item as? Map<*, *>)?.let { rel ->
+                        val src = rel["src_id"]?.toString()?.trim().orEmpty()
+                        val tgt = rel["tgt_id"]?.toString()?.trim().orEmpty()
+                        if (src.isBlank() || tgt.isBlank()) {
+                            null
+                        } else {
+                            CustomKgRelationshipInput(
+                                srcId = src,
+                                tgtId = tgt,
+                                description = rel["description"]?.toString().orEmpty(),
+                                keywords = rel["keywords"]?.toString().orEmpty(),
+                                weight = rel["weight"]?.toString()?.toDoubleOrNull() ?: 1.0,
+                                sourceId = rel["source_id"]?.toString().orEmpty(),
+                            )
+                        }
+                    }
+                }.orEmpty()
+        return CustomKgPayload(chunkList, entities, relationships)
     }
 
     /**
@@ -438,6 +508,24 @@ class PathRAG(
         entitiesVdb.drop()
         relationshipsVdb.drop()
         logger.info { "Graph and associated entity/relationship vectors dropped." }
+    }
+
+    /**
+     * Drop all storage namespaces (graph, vectors, and KV stores).
+     */
+    fun dropAll() = runBlockingMaybe { adropAll() }
+
+    /**
+     * Drop all storage namespaces asynchronously.
+     */
+    suspend fun adropAll() {
+        runCatching { textChunks.drop() }.onFailure { ex -> logger.warn(ex) { "Failed to drop textChunks KV" } }
+        runCatching { fullDocs.drop() }.onFailure { ex -> logger.warn(ex) { "Failed to drop fullDocs KV" } }
+        runCatching { chunkEntityRelationGraph.drop() }.onFailure { ex -> logger.warn(ex) { "Failed to drop graph storage" } }
+        runCatching { entitiesVdb.drop() }.onFailure { ex -> logger.warn(ex) { "Failed to drop entities vector storage" } }
+        runCatching { relationshipsVdb.drop() }.onFailure { ex -> logger.warn(ex) { "Failed to drop relationships vector storage" } }
+        runCatching { chunksVdb.drop() }.onFailure { ex -> logger.warn(ex) { "Failed to drop chunks vector storage" } }
+        logger.info { "All PathRAG storages dropped." }
     }
 
     /**

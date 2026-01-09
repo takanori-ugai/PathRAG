@@ -95,6 +95,7 @@ class NanoVectorDBStorage(
     /**
      * Query vectors by similarity using embeddings generated for the query text.
      */
+    @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
         query: String,
         topK: Int,
@@ -104,7 +105,7 @@ class NanoVectorDBStorage(
         val queryEmbeddings =
             try {
                 embeddingFunc(listOf(query))
-            } catch (e: Exception) {
+            } catch (e: IllegalStateException) {
                 logger.error(e) { "Embedding generation failed during query in namespace '$namespace'." }
                 throw e
             }
@@ -121,6 +122,7 @@ class NanoVectorDBStorage(
     /**
      * Insert or update vectors with metadata.
      */
+    @Suppress("TooGenericExceptionCaught")
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
         val items = data.entries.toList()
         val contents = items.map { it.value["content"]?.toString().orEmpty() }
@@ -129,7 +131,7 @@ class NanoVectorDBStorage(
         val embeddings =
             try {
                 embeddingFunc(validPairs.map { it.second })
-            } catch (e: Exception) {
+            } catch (e: IllegalStateException) {
                 logger.error(e) { "Embedding generation failed during upsert in namespace '$namespace'." }
                 throw e
             }

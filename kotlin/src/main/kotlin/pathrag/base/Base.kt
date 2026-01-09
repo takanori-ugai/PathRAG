@@ -28,6 +28,79 @@ data class QueryParam(
 )
 
 /**
+ * Optional addon parameters for LLM prompts/extraction.
+ */
+data class AddonParams(
+    val entityTypes: List<String> = emptyList(),
+    val language: String? = null,
+    val exampleNumber: Int? = null,
+) {
+    fun asConfig(): Map<String, Any?> =
+        mapOf(
+            "entity_types" to entityTypes,
+            "language" to language,
+            "example_number" to exampleNumber,
+        )
+}
+
+/**
+ * Optional backend configuration such as Neo4j or Mongo connection details.
+ */
+data class ExtraConfig(
+    val neo4jUri: String? = null,
+    val neo4jUser: String? = null,
+    val neo4jPassword: String? = null,
+    val mongoUri: String? = null,
+    val mongoDatabase: String? = null,
+    val additional: Map<String, Any?> = emptyMap(),
+) {
+    fun toMap(): Map<String, Any?> =
+        mapOf(
+            "neo4j_uri" to neo4jUri,
+            "neo4j_user" to neo4jUser,
+            "neo4j_password" to neo4jPassword,
+            "mongo_uri" to mongoUri,
+            "mongo_database" to mongoDatabase,
+        ).filterValues { it != null } + additional
+}
+
+/**
+ * Typed container for configuration passed to storage/LLM layers.
+ */
+data class GlobalConfig(
+    val workingDir: String,
+    val embeddingFunc: Any?,
+    val llmModelFunc: Any?,
+    val chunkTokenSize: Int,
+    val chunkOverlapTokenSize: Int,
+    val language: String,
+    val keywordsExamples: String,
+    val embeddingCacheConfig: Map<String, Any?>,
+    val addonParams: AddonParams,
+    val llmModelName: String,
+    val similarityCheckPrompt: String,
+    val fixedHighLevelKeywords: List<String>,
+    val fixedLowLevelKeywords: List<String>,
+) {
+    fun toMap(extra: Map<String, Any?> = emptyMap()): Map<String, Any?> =
+        mapOf(
+            "working_dir" to workingDir,
+            "embedding_func" to embeddingFunc,
+            "llm_model_func" to llmModelFunc,
+            "chunk_token_size" to chunkTokenSize,
+            "chunk_overlap_token_size" to chunkOverlapTokenSize,
+            "language" to language,
+            "keywords_examples" to keywordsExamples,
+            "embedding_cache_config" to embeddingCacheConfig,
+            "addon_params" to addonParams.asConfig(),
+            "llm_model_name" to llmModelName,
+            "similarity_check_prompt" to similarityCheckPrompt,
+            "fixed_high_level_keywords" to fixedHighLevelKeywords,
+            "fixed_low_level_keywords" to fixedLowLevelKeywords,
+        ).plus(extra)
+}
+
+/**
  * Shared namespace/config contract for storage implementations.
  *
  * @property namespace logical namespace for the storage instance.
