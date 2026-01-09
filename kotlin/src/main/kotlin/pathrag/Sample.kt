@@ -1,6 +1,7 @@
 package pathrag
 
 import kotlinx.coroutines.runBlocking
+import java.nio.file.Paths
 
 /**
  * Minimal sample showing how to use the Kotlin PathRAG port.
@@ -11,12 +12,19 @@ import kotlinx.coroutines.runBlocking
  */
 fun main() =
     runBlocking {
+        val env = EnvironmentConfig.load(Paths.get("../.env"))
+        val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
+        val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
+        val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
         val rag =
             PathRAG(
-                workingDir = "./sample_cache",
+                workingDir = env["WORKING_DIR"] ?: "./sample_cache",
+                kvStorage = kvStorage,
+                vectorStorage = vectorStorage,
+                graphStorage = graphStorage,
                 chunkTokenSize = 800,
                 chunkOverlapTokenSize = 120,
-                language = "English",
+                language = env["LANGUAGE"] ?: "English",
                 keywordExamples = "",
                 // Optional: pin keywords instead of calling the LLM extractor
                 highLevelKeywords = listOf("themes", "Dickens"),

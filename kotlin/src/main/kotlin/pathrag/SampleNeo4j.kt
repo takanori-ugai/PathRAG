@@ -1,6 +1,7 @@
 package pathrag
 
 import kotlinx.coroutines.runBlocking
+import java.nio.file.Paths
 
 /**
  * Sample showing how to run PathRAG with Neo4j-backed graph storage.
@@ -10,13 +11,26 @@ import kotlinx.coroutines.runBlocking
  */
 fun main() =
     runBlocking {
+        val env = EnvironmentConfig.load(Paths.get("../.env"))
+        val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
+        val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
+        val graphStorage = env["GRAPH_STORAGE"] ?: "Neo4jStorage"
+        val neo4jConfig =
+            mapOf(
+                "neo4j_uri" to env["NEO4J_URI"],
+                "neo4j_user" to env["NEO4J_USER"],
+                "neo4j_password" to env["NEO4J_PASSWORD"],
+            ).filterValues { !it.isNullOrBlank() }
         val rag =
             PathRAG(
-                workingDir = "./sample_cache_neo4j",
-                graphStorage = "Neo4jStorage",
+                workingDir = env["WORKING_DIR"] ?: "./sample_cache_neo4j",
+                kvStorage = kvStorage,
+                vectorStorage = vectorStorage,
+                graphStorage = graphStorage,
+                extraConfig = neo4jConfig,
                 chunkTokenSize = 800,
                 chunkOverlapTokenSize = 120,
-                language = "English",
+                language = env["LANGUAGE"] ?: "English",
                 // Optional: pin keywords to bypass LLM keyword extraction
                 highLevelKeywords = listOf("themes", "Dickens"),
                 lowLevelKeywords = listOf("poverty", "class struggle", "redemption"),

@@ -110,6 +110,8 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
     val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
     val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
     val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
+    val chunkTokenSize = env.chunkTokenSize()
+    val chunkOverlapTokenSize = env.chunkOverlapTokenSize()
     val neo4jConfig =
         mapOf(
             "neo4j_uri" to env["NEO4J_URI"],
@@ -123,6 +125,8 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
             kvStorage = kvStorage,
             vectorStorage = vectorStorage,
             graphStorage = graphStorage,
+            chunkTokenSize = chunkTokenSize,
+            chunkOverlapTokenSize = chunkOverlapTokenSize,
             extraConfig = neo4jConfig,
         )
     val userRepository = UserRepository(Paths.get(workingDir, "users.json"))
@@ -1255,6 +1259,10 @@ class EnvironmentConfig private constructor(
     operator fun get(key: String): String? = System.getenv(key) ?: values[key]
 
     fun corsOrigins(): String = this["CORS_ORIGINS"] ?: "*"
+
+    fun chunkTokenSize(): Int = this["CHUNK_TOKEN_SIZE"]?.toIntOrNull() ?: 800
+
+    fun chunkOverlapTokenSize(): Int = this["CHUNK_OVERLAP_TOKEN_SIZE"]?.toIntOrNull() ?: 120
 
     companion object {
         fun empty() = EnvironmentConfig(emptyMap())
