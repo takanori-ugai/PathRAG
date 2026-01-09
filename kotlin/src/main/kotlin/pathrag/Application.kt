@@ -3,6 +3,7 @@ package pathrag
 import com.auth0.jwt.JWT
 import com.auth0.jwt.algorithms.Algorithm
 import com.auth0.jwt.exceptions.JWTVerificationException
+import com.auth0.jwt.interfaces.JWTVerifier
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -378,6 +379,12 @@ object TokenService {
     @Volatile
     private var issuer: String = "pathrag"
 
+    @Volatile
+    private var algorithm: Algorithm? = null
+
+    @Volatile
+    private var verifier: JWTVerifier? = null
+
     fun configure(env: EnvironmentConfig) {
         if (secret == null) {
             secret = SecretKeyLoader.load(env)
@@ -386,6 +393,7 @@ object TokenService {
             env["ACCESS_TOKEN_EXPIRE_MINUTES"]?.toLongOrNull()?.takeIf { it > 0 }?.times(60)
                 ?: DEFAULT_TOKEN_TTL_MINUTES * 60
         issuer = env["TOKEN_ISSUER"] ?: "pathrag"
+        rebuildCrypto()
     }
 
     private fun secret(): ByteArray =
@@ -393,10 +401,29 @@ object TokenService {
             secret ?: SecretKeyLoader.load(EnvironmentConfig.empty()).also { secret = it }
         }
 
+    private fun rebuildCrypto() =
+        synchronized(this) {
+            val alg = Algorithm.HMAC256(secret())
+            algorithm = alg
+            verifier = JWT.require(alg).withIssuer(issuer).build()
+        }
+
+    private fun ensureAlgorithm(): Algorithm =
+        algorithm ?: run {
+            rebuildCrypto()
+            algorithm!!
+        }
+
+    private fun ensureVerifier(): JWTVerifier =
+        verifier ?: run {
+            rebuildCrypto()
+            verifier!!
+        }
+
     fun issueToken(username: String): String {
         val issuedAt = Instant.now()
         val expiresAt = issuedAt.plusSeconds(tokenTtlSeconds)
-        val algorithm = Algorithm.HMAC256(secret())
+        val algorithm = ensureAlgorithm()
         return JWT
             .create()
             .withIssuer(issuer)
@@ -407,16 +434,13 @@ object TokenService {
             .sign(algorithm)
     }
 
-    fun usernameFromToken(token: String?): String? {
-        val algorithm = Algorithm.HMAC256(secret())
-        return try {
-            val verifier = JWT.require(algorithm).withIssuer(issuer).build()
-            verifier.verify(token).subject
+    fun usernameFromToken(token: String?): String? =
+        try {
+            ensureVerifier().verify(token).subject
         } catch (ex: JWTVerificationException) {
             logger.warn(ex) { "Invalid or expired token" }
             null
         }
-    }
 }
 
 @Serializable
@@ -1035,7 +1059,7 @@ private fun Route.documentRoutes(
     route("/documents") {
         get("/") {
             call.withAuthenticatedUser(userRepository) { currentUser ->
-                val docs = repository.all().filter { it.userId == currentUser.id }
+                val docs = repository.all()
                 call.respond(mapOf("documents" to docs))
             }
         }
@@ -1131,7 +1155,7 @@ private fun Route.documentRoutes(
                 if (doc == null) {
                     call.respond(HttpStatusCode.NotFound)
                 } else {
-                    call.respond(DocumentStatusResponse(id, repository.status(id)))
+                    call.respond(DocumentStatusResponse(id, doc.status))
                 }
             }
         }
