@@ -8,13 +8,16 @@ import pathrag.base.BaseVectorStorage
 import pathrag.base.QueryParam
 import pathrag.base.runBlockingMaybe
 import pathrag.llm.defaultEmbeddingFunc
+import pathrag.llm.ollamaComplete
 import pathrag.llm.openAiComplete
 import pathrag.operate.chunkingByTokenSize
 import pathrag.operate.extractEntities
 import pathrag.operate.kgQuery
 import pathrag.storage.JsonKVStorage
 import pathrag.storage.NanoVectorDBStorage
+import pathrag.storage.Neo4jKVStorage
 import pathrag.storage.Neo4jStorage
+import pathrag.storage.Neo4jVectorStorage
 import pathrag.storage.NetworkXStorage
 import pathrag.utils.ResponseCache
 import pathrag.utils.computeMdHashId
@@ -57,36 +60,75 @@ class PathRAG(
             "language" to language, // follow top-level language
             "example_number" to (System.getenv("KEYWORD_EXAMPLE_COUNT")?.toIntOrNull() ?: 3),
         ),
+    private val extraConfig: Map<String, Any?> = emptyMap(),
 ) {
     private val logger = KotlinLogging.logger("PathRAG")
-    private val llmModelName: String = System.getenv("OPENAI_MODEL") ?: "gpt-4o-mini"
+    private val llmProvider: String = System.getenv("LLM_PROVIDER")?.lowercase() ?: "openai"
+    private val llmModelName: String =
+        when (llmProvider) {
+            "ollama" -> System.getenv("OLLAMA_MODEL") ?: "llama3"
+            else -> System.getenv("OPENAI_MODEL") ?: "gpt-4o-mini"
+        }
 
     private val embeddingFunc = defaultEmbeddingFunc()
     private val llmModelFunc: suspend (String, String?, List<Map<String, String>>, Boolean, Boolean, Int?, Any?) -> String =
-        { prompt, system, history, keyword, stream, maxTokens, hashingKv ->
-            openAiComplete(
-                llmModelName,
-                prompt,
-                systemPrompt = system,
-                historyMessages = history,
-                keywordExtraction = keyword,
-                stream = stream,
-                maxTokens = maxTokens,
-                hashingKv = hashingKv,
-            )
+        when (llmProvider) {
+            "ollama" -> { prompt, system, history, keyword, stream, maxTokens, hashingKv ->
+                ollamaComplete(
+                    llmModelName,
+                    prompt,
+                    systemPrompt = system,
+                    historyMessages = history,
+                    keywordExtraction = keyword,
+                    stream = stream,
+                    maxTokens = maxTokens,
+                    hashingKv = hashingKv,
+                )
+            }
+
+            else -> { prompt, system, history, keyword, stream, maxTokens, hashingKv ->
+                openAiComplete(
+                    llmModelName,
+                    prompt,
+                    systemPrompt = system,
+                    historyMessages = history,
+                    keywordExtraction = keyword,
+                    stream = stream,
+                    maxTokens = maxTokens,
+                    hashingKv = hashingKv,
+                )
+            }
         }
 
     private val llmResponseCache = ResponseCache(globalConfig())
 
+    private data class CustomKgEntity(
+        val entityName: String,
+        val entityType: String,
+        val description: String,
+        val sourceId: String,
+    )
+
+    private data class CustomKgRelationship(
+        val srcId: String,
+        val tgtId: String,
+        val description: String,
+        val keywords: String,
+        val weight: Double,
+        val sourceId: String,
+    )
+
     private fun createKvStorage(namespace: String): BaseKVStorage<Map<String, Any>> =
         when (kvStorage) {
             "JsonKVStorage" -> JsonKVStorage(namespace, globalConfig(), embeddingFunc)
+            "Neo4jKVStorage" -> Neo4jKVStorage(namespace, globalConfig())
             else -> error("Unknown kv storage: $kvStorage")
         }
 
     private fun createVectorStorage(namespace: String): BaseVectorStorage =
         when (vectorStorage) {
             "NanoVectorDBStorage" -> NanoVectorDBStorage(namespace, globalConfig(), embeddingFunc)
+            "Neo4jVectorStorage" -> Neo4jVectorStorage(namespace, globalConfig(), embeddingFunc)
             else -> error("Unknown vector storage: $vectorStorage")
         }
 
@@ -119,7 +161,7 @@ class PathRAG(
             "similarity_check_prompt" to similarityCheckPrompt,
             "fixed_high_level_keywords" to highLevelKeywords,
             "fixed_low_level_keywords" to lowLevelKeywords,
-        )
+        ).plus(extraConfig)
 
     fun insert(stringOrStrings: Any) = runBlockingMaybe { ainsert(stringOrStrings) }
 
@@ -143,15 +185,17 @@ class PathRAG(
             }
         val chunkMap = mutableMapOf<String, Map<String, Any>>()
         newDocs.forEach { (docKey, doc) ->
+            val content = doc["content"] as String
             val chunks =
                 chunkingByTokenSize(
-                    doc["content"]?.toString().orEmpty(),
+                    content,
                     overlapTokenSize = chunkOverlapTokenSize,
                     maxTokenSize = chunkTokenSize,
                 )
             chunks.forEach { chunk ->
-                val id = computeMdHashId(chunk["content"].toString(), prefix = "chunk-")
-                chunkMap[id] = chunk + mapOf("full_doc_id" to docKey)
+                val content = (chunk["content"] as? String)?.trim().orEmpty()
+                val id = computeMdHashId(content, prefix = "chunk-")
+                chunkMap[id] = chunk + mapOf("content" to content, "full_doc_id" to docKey)
             }
         }
         try {
@@ -176,13 +220,20 @@ class PathRAG(
 
     suspend fun ainsertCustomKg(customKg: Map<String, Any?>) {
         val chunks = (customKg["chunks"] as? List<Map<String, Any?>>).orEmpty()
-        val entities = (customKg["entities"] as? List<Map<String, Any?>>).orEmpty()
-        val relationships = (customKg["relationships"] as? List<Map<String, Any?>>).orEmpty()
+        val entities =
+            (customKg["entities"] as? List<Map<String, Any?>>)
+                ?.mapNotNull { it.toCustomEntity() }
+                .orEmpty()
+        val relationships =
+            (customKg["relationships"] as? List<Map<String, Any?>>)
+                ?.mapNotNull { it.toCustomRelationship() }
+                .orEmpty()
 
         val chunkData =
             chunks.associate { chunk ->
-                val id = computeMdHashId(chunk["content"].toString(), prefix = "chunk-")
-                id to mapOf("content" to chunk["content"].toString(), "source_id" to chunk["source_id"].toString())
+                val content = (chunk["content"] as? String)?.trim().orEmpty()
+                val id = computeMdHashId(content, prefix = "chunk-")
+                id to mapOf("content" to content, "source_id" to chunk["source_id"].toString())
             }
         if (chunkData.isNotEmpty()) {
             try {
@@ -195,28 +246,52 @@ class PathRAG(
         }
 
         entities.forEach { entity ->
-            val name = "\"${entity["entity_name"].toString().uppercase()}\""
+            val name = entity.entityName.trim('"').uppercase()
             val nodeData =
                 mapOf(
-                    "entity_type" to (entity["entity_type"] ?: "UNKNOWN"),
-                    "description" to (entity["description"] ?: "No description provided"),
-                    "source_id" to (entity["source_id"] ?: "UNKNOWN"),
+                    "entity_type" to entity.entityType.ifBlank { "UNKNOWN" },
+                    "description" to entity.description.ifBlank { "No description provided" },
+                    "source_id" to entity.sourceId.ifBlank { "UNKNOWN" },
                 )
-            chunkEntityRelationGraph.upsertNode(name, nodeData)
+            runCatching { chunkEntityRelationGraph.upsertNode(name, nodeData) }
+                .onFailure { ex -> logger.error(ex) { "Failed to upsert node $name" } }
         }
 
         relationships.forEach { rel ->
-            val src = "\"${rel["src_id"].toString().uppercase()}\""
-            val tgt = "\"${rel["tgt_id"].toString().uppercase()}\""
+            val src = rel.srcId.trim('"').uppercase()
+            val tgt = rel.tgtId.trim('"').uppercase()
             val data =
                 mapOf(
-                    "weight" to (rel["weight"] ?: 1.0),
-                    "description" to (rel["description"] ?: ""),
-                    "keywords" to (rel["keywords"] ?: ""),
-                    "source_id" to (rel["source_id"] ?: "UNKNOWN"),
+                    "weight" to rel.weight,
+                    "description" to rel.description,
+                    "keywords" to rel.keywords,
+                    "source_id" to rel.sourceId.ifBlank { "UNKNOWN" },
                 )
-            chunkEntityRelationGraph.upsertEdge(src, tgt, data)
+            runCatching { chunkEntityRelationGraph.upsertEdge(src, tgt, data) }
+                .onFailure { ex -> logger.error(ex) { "Failed to upsert edge $src -> $tgt" } }
         }
+    }
+
+    private fun Map<String, Any?>.toCustomEntity(): CustomKgEntity? {
+        val name = this["entity_name"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val type = this["entity_type"]?.toString().orEmpty()
+        val desc = this["description"]?.toString().orEmpty()
+        val sourceId = this["source_id"]?.toString().orEmpty()
+        return CustomKgEntity(name, type, desc, sourceId)
+    }
+
+    private fun Map<String, Any?>.toCustomRelationship(): CustomKgRelationship? {
+        val src = this["src_id"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val tgt = this["tgt_id"]?.toString()?.trim()?.takeIf { it.isNotBlank() } ?: return null
+        val desc = this["description"]?.toString().orEmpty()
+        val keywords = this["keywords"]?.toString().orEmpty()
+        val weight =
+            this["weight"]
+                ?.toString()
+                ?.toDoubleOrNull()
+                ?: 1.0
+        val sourceId = this["source_id"]?.toString().orEmpty()
+        return CustomKgRelationship(src, tgt, desc, keywords, weight, sourceId)
     }
 
     fun query(
@@ -249,10 +324,151 @@ class PathRAG(
     fun deleteByEntity(entityName: String) = runBlockingMaybe { adeleteByEntity(entityName) }
 
     suspend fun adeleteByEntity(entityName: String) {
-        val key = "\"${entityName.uppercase()}\""
+        val key = entityName.trim('"').uppercase()
         entitiesVdb.deleteEntity(key)
         relationshipsVdb.deleteRelation(key)
         chunkEntityRelationGraph.deleteNode(key)
         logger.info { "Entity '$key' and relationships deleted." }
+    }
+
+    fun deleteEdge(
+        srcId: String,
+        tgtId: String,
+    ) = runBlockingMaybe { adeleteEdge(srcId, tgtId) }
+
+    suspend fun adeleteEdge(
+        srcId: String,
+        tgtId: String,
+    ) {
+        val srcKey = srcId.trim('"').uppercase()
+        val tgtKey = tgtId.trim('"').uppercase()
+        relationshipsVdb.deleteRelationBetween(srcKey, tgtKey)
+        chunkEntityRelationGraph.deleteEdge(srcKey, tgtKey)
+        logger.info { "Edge '$srcKey' -> '$tgtKey' deleted." }
+    }
+
+    fun cleanupGraph(): Map<String, Int> = runBlockingMaybe { acleanupGraph() }
+
+    suspend fun acleanupGraph(): Map<String, Int> {
+        var removedEdges = 0
+        var removedNodes = 0
+
+        val nodeSet = chunkEntityRelationGraph.nodes().toSet()
+        val danglingEdges = chunkEntityRelationGraph.edges().filter { (s, t) -> s !in nodeSet || t !in nodeSet }
+        danglingEdges.forEach { (s, t) ->
+            relationshipsVdb.deleteRelationBetween(s, t)
+            chunkEntityRelationGraph.deleteEdge(s, t)
+            removedEdges += 1
+        }
+
+        val nodes = chunkEntityRelationGraph.nodes()
+        val isolated =
+            nodes.filter { node ->
+                chunkEntityRelationGraph.nodeDegree(node) == 0
+            }
+        isolated.forEach { node ->
+            entitiesVdb.deleteEntity(node)
+            relationshipsVdb.deleteRelation(node)
+            chunkEntityRelationGraph.deleteNode(node)
+            removedNodes += 1
+        }
+
+        logger.info { "Graph cleanup removed $removedEdges dangling edges and $removedNodes isolated nodes." }
+        return mapOf("removed_edges" to removedEdges, "removed_nodes" to removedNodes)
+    }
+
+    fun dropGraph() = runBlockingMaybe { adropGraph() }
+
+    suspend fun adropGraph() {
+        chunkEntityRelationGraph.drop()
+        entitiesVdb.drop()
+        relationshipsVdb.drop()
+        logger.info { "Graph and associated entity/relationship vectors dropped." }
+    }
+
+    fun upsertEntity(
+        entityName: String,
+        description: String = "",
+        entityType: String = "UNKNOWN",
+        sourceId: String? = null,
+    ) = runBlockingMaybe { aupsertEntity(entityName, description, entityType, sourceId) }
+
+    suspend fun aupsertEntity(
+        entityName: String,
+        description: String = "",
+        entityType: String = "UNKNOWN",
+        sourceId: String? = null,
+    ) {
+        val key = entityName.trim('"').uppercase()
+        val nodeData =
+            mapOf(
+                "entity_type" to entityType,
+                "description" to description,
+                "source_id" to (sourceId ?: "UNKNOWN"),
+                "entity_name" to key,
+            )
+        val vectorId = computeMdHashId(key, prefix = "ent-")
+        runCatching { chunkEntityRelationGraph.upsertNode(key, nodeData) }
+            .onFailure { ex -> logger.error(ex) { "Failed to upsert node $key" } }
+        runCatching {
+            entitiesVdb.upsert(
+                mapOf(
+                    vectorId to
+                        mapOf(
+                            "content" to description,
+                            "entity_name" to key,
+                            "source_id" to (sourceId ?: ""),
+                        ),
+                ),
+            )
+        }.onFailure { ex -> logger.error(ex) { "Failed to upsert entity vector $vectorId" } }
+        logger.info { "Entity '$key' upserted." }
+    }
+
+    fun upsertEdge(
+        srcId: String,
+        tgtId: String,
+        description: String = "",
+        keywords: String = "",
+        weight: Double = 1.0,
+        sourceId: String? = null,
+    ) = runBlockingMaybe { aupsertEdge(srcId, tgtId, description, keywords, weight, sourceId) }
+
+    suspend fun aupsertEdge(
+        srcId: String,
+        tgtId: String,
+        description: String = "",
+        keywords: String = "",
+        weight: Double = 1.0,
+        sourceId: String? = null,
+    ) {
+        val srcKey = srcId.trim('"').uppercase()
+        val tgtKey = tgtId.trim('"').uppercase()
+        val data =
+            mapOf(
+                "weight" to weight,
+                "description" to description,
+                "keywords" to keywords,
+                "source_id" to (sourceId ?: "UNKNOWN"),
+            )
+        runCatching { chunkEntityRelationGraph.upsertEdge(srcKey, tgtKey, data) }
+            .onFailure { ex -> logger.error(ex) { "Failed to upsert edge $srcKey -> $tgtKey" } }
+        val relId = computeMdHashId(srcKey + tgtKey, prefix = "rel-")
+        runCatching {
+            relationshipsVdb.upsert(
+                mapOf(
+                    relId to
+                        mapOf(
+                            "src_id" to srcKey,
+                            "tgt_id" to tgtKey,
+                            "content" to (description + keywords),
+                            "keywords" to keywords,
+                            "description" to description,
+                            "source_id" to (sourceId ?: ""),
+                        ),
+                ),
+            )
+        }.onFailure { ex -> logger.error(ex) { "Failed to upsert relationship vector $relId" } }
+        logger.info { "Edge '$srcKey' -> '$tgtKey' upserted." }
     }
 }

@@ -5,8 +5,11 @@ import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
 import io.ktor.http.HttpMethod
 import io.ktor.http.HttpStatusCode
+import io.ktor.http.charset
+import io.ktor.http.content.PartData
 import io.ktor.serialization.kotlinx.json.json
 import io.ktor.server.application.Application
+import io.ktor.server.application.ApplicationCall
 import io.ktor.server.application.call
 import io.ktor.server.application.install
 import io.ktor.server.engine.embeddedServer
@@ -16,6 +19,7 @@ import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.cors.routing.CORS
 import io.ktor.server.plugins.swagger.swaggerUI
 import io.ktor.server.request.receive
+import io.ktor.server.request.receiveMultipart
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondRedirect
 import io.ktor.server.routing.Route
@@ -25,6 +29,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
+import io.ktor.utils.io.core.readBytes
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -38,12 +43,17 @@ import kotlinx.serialization.json.Json
 import pathrag.PathRAG
 import pathrag.base.QueryParam
 import java.io.File
+import java.nio.charset.StandardCharsets
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.Paths
 import java.security.MessageDigest
 import java.time.Instant
+import java.util.Base64
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.crypto.Mac
+import javax.crypto.spec.SecretKeySpec
 
 private val logger = KotlinLogging.logger("pathrag")
 
@@ -94,11 +104,30 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
     val uploadDir = env["UPLOAD_DIR"] ?: "./uploads"
     createDirectories(listOf(workingDir, uploadDir))
 
-    val rag = PathRAG(workingDir = workingDir)
+    val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
+    val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
+    val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
+    val neo4jConfig =
+        mapOf(
+            "neo4j_uri" to env["NEO4J_URI"],
+            "neo4j_user" to env["NEO4J_USER"],
+            "neo4j_password" to env["NEO4J_PASSWORD"],
+        ).filterValues { !it.isNullOrBlank() }
+
+    val rag =
+        PathRAG(
+            workingDir = workingDir,
+            kvStorage = kvStorage,
+            vectorStorage = vectorStorage,
+            graphStorage = graphStorage,
+            extraConfig = neo4jConfig,
+        )
     val userRepository = UserRepository(Paths.get(workingDir, "users.json"))
     val chatRepository = ChatRepository(Paths.get(workingDir, "chats.json"))
     val documentRepository = DocumentRepository(uploadDir, Paths.get(workingDir, "documents.json"))
+    TokenService.configure(env)
     runBlocking { createDefaultUsers(userRepository) }
+    runBlocking { preloadKnowledgeGraphIfEmpty(rag, documentRepository) }
 
     routing {
         get("/") { call.respondRedirect("/swagger") }
@@ -107,16 +136,18 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
         get("/app") { call.respondRedirect("/ui/index.html") }
         authRoutes(userRepository)
         userRoutes(userRepository)
-        chatRoutes(chatRepository)
-        documentRoutes(documentRepository, rag)
+        chatRoutes(userRepository, chatRepository)
+        documentRoutes(documentRepository, rag, userRepository)
         knowledgeGraphRoutes(rag)
         // query endpoint relocated under /documents/query
     }
 }
 
 private fun warnOnMissingRequiredVars(env: EnvironmentConfig) {
-    val required = listOf("SECRET_KEY")
-    val missing = required.filter { env[it].isNullOrBlank() }
+    val missing =
+        buildList {
+            if (!SecretKeyLoader.hasSecret(env)) add("SECRET_KEY_FILE (preferred) or SECRET_KEY")
+        }
     if (missing.isNotEmpty()) {
         logger.warn { "Missing required environment variables: ${missing.joinToString(", ")}" }
         logger.warn { "Please set these variables in your .env file or environment. See sample.env for an example configuration." }
@@ -151,28 +182,36 @@ class UserRepository(
             ignoreUnknownKeys = true
         }
 
-    init {
-        runBlocking { load() }
+    @Volatile
+    private var initialized = false
+
+    suspend fun count(): Int {
+        ensureLoaded()
+        return mutex.withLock { users.size }
     }
 
-    suspend fun count(): Int = mutex.withLock { users.size }
-
-    suspend fun add(user: User): User =
-        mutex.withLock {
+    suspend fun add(user: User): User {
+        ensureLoaded()
+        return mutex.withLock {
             val stored =
                 if (user.id == null) user.copy(id = nextId++) else user.copy(id = user.id)
             users.add(stored)
             persist()
             stored
         }
+    }
 
-    suspend fun find(username: String): User? = mutex.withLock { users.find { it.username == username } }
+    suspend fun find(username: String): User? {
+        ensureLoaded()
+        return mutex.withLock { users.find { it.username == username } }
+    }
 
     suspend fun updateTheme(
         username: String,
         theme: String,
-    ): User? =
-        mutex.withLock {
+    ): User? {
+        ensureLoaded()
+        return mutex.withLock {
             val idx = users.indexOfFirst { it.username == username }
             if (idx == -1) return@withLock null
             val updated = users[idx].copy(theme = theme, updatedAt = Instant.now().toString())
@@ -180,22 +219,34 @@ class UserRepository(
             persist()
             updated
         }
+    }
 
-    suspend fun list(): List<User> = mutex.withLock { users.toList() }
+    suspend fun list(): List<User> {
+        ensureLoaded()
+        return mutex.withLock { users.toList() }
+    }
 
-    private suspend fun load() {
-        val file = filePath?.toFile() ?: return
-        if (!file.exists()) return
-        val parsed =
-            withContext(Dispatchers.IO) {
-                runCatching { json.decodeFromString<List<User>>(file.readText()) }
-                    .onFailure { ex -> logger.warn(ex) { "Failed to load users from ${file.absolutePath}" } }
-                    .getOrNull()
-            } ?: return
+    suspend fun ensureLoaded() {
+        if (initialized) return
         mutex.withLock {
-            users.clear()
-            users.addAll(parsed)
-            nextId = (users.maxOfOrNull { it.id ?: 0 } ?: 0) + 1
+            if (initialized) return
+            val file = filePath?.toFile()
+            val parsed =
+                if (file != null && file.exists()) {
+                    withContext(Dispatchers.IO) {
+                        runCatching { json.decodeFromString<List<User>>(file.readText()) }
+                            .onFailure { ex -> logger.warn(ex) { "Failed to load users from ${file.absolutePath}" } }
+                            .getOrNull()
+                    }
+                } else {
+                    emptyList()
+                }
+            if (!parsed.isNullOrEmpty()) {
+                users.clear()
+                users.addAll(parsed)
+                nextId = (users.maxOfOrNull { it.id ?: 0 } ?: 0) + 1
+            }
+            initialized = true
         }
     }
 
@@ -270,6 +321,109 @@ object PasswordHasher {
     }
 }
 
+private object SecretKeyLoader {
+    fun load(env: EnvironmentConfig): ByteArray {
+        val secretFromFile =
+            env["SECRET_KEY_FILE"]?.takeIf { it.isNotBlank() }?.let { pathString ->
+                val path = runCatching { Paths.get(pathString) }.getOrNull()
+                if (path == null) {
+                    logger.error { "SECRET_KEY_FILE path is invalid: $pathString" }
+                    null
+                } else {
+                    runCatching { Files.readString(path).trim() }
+                        .onFailure { ex -> logger.error(ex) { "Failed to read SECRET_KEY_FILE at $pathString" } }
+                        .getOrNull()
+                        ?.takeIf { it.isNotBlank() }
+                }
+            }
+        if (secretFromFile != null) {
+            return secretFromFile.toByteArray(StandardCharsets.UTF_8)
+        }
+
+        val envSecret = env["SECRET_KEY"]?.takeIf { it.isNotBlank() }
+        if (envSecret != null) {
+            return envSecret.toByteArray(StandardCharsets.UTF_8)
+        }
+
+        logger.warn {
+            "No SECRET_KEY_FILE configured and SECRET_KEY missing. Generated ephemeral secret; tokens will be invalidated on restart."
+        }
+        return UUID.randomUUID().toString().toByteArray(StandardCharsets.UTF_8)
+    }
+
+    fun hasSecret(env: EnvironmentConfig): Boolean {
+        val fileSecretPresent =
+            env["SECRET_KEY_FILE"]?.takeIf { it.isNotBlank() }?.let { pathString ->
+                val path = runCatching { Paths.get(pathString) }.getOrNull() ?: return@let false
+                if (!Files.exists(path)) return@let false
+                val content = runCatching { Files.readString(path).trim() }.getOrNull()
+                !content.isNullOrBlank()
+            } ?: false
+
+        return fileSecretPresent || !env["SECRET_KEY"].isNullOrBlank()
+    }
+}
+
+object TokenService {
+    private val encoder = Base64.getUrlEncoder().withoutPadding()
+    private val decoder = Base64.getUrlDecoder()
+
+    private const val DEFAULT_TOKEN_TTL_MINUTES = 30L
+
+    @Volatile
+    private var secret: ByteArray? = null
+
+    @Volatile
+    private var tokenTtlSeconds: Long = DEFAULT_TOKEN_TTL_MINUTES * 60
+
+    fun configure(env: EnvironmentConfig) {
+        if (secret == null) {
+            secret = SecretKeyLoader.load(env)
+        }
+        tokenTtlSeconds =
+            env["ACCESS_TOKEN_EXPIRE_MINUTES"]?.toLongOrNull()?.takeIf { it > 0 }?.times(60)
+                ?: DEFAULT_TOKEN_TTL_MINUTES * 60
+    }
+
+    private fun secret(): ByteArray =
+        secret ?: synchronized(this) {
+            secret ?: SecretKeyLoader.load(EnvironmentConfig.empty()).also { secret = it }
+        }
+
+    fun issueToken(username: String): String {
+        val issuedAt = Instant.now()
+        val expiresAt = issuedAt.plusSeconds(tokenTtlSeconds)
+        val nonce = UUID.randomUUID().toString()
+        val payload = listOf(username, nonce, issuedAt.toString(), expiresAt.toString()).joinToString("|")
+        val signature = hmacSha256(payload.toByteArray(StandardCharsets.UTF_8))
+        return "${encoder.encodeToString(payload.toByteArray(StandardCharsets.UTF_8))}.${encoder.encodeToString(signature)}"
+    }
+
+    fun usernameFromToken(token: String?): String? {
+        val parts = token?.split(".") ?: return null
+        if (parts.size != 2) return null
+        val payloadBytes =
+            runCatching { decoder.decode(parts[0]) }.getOrElse { return null }
+        val providedSignature =
+            runCatching { decoder.decode(parts[1]) }.getOrElse { return null }
+        val expected = hmacSha256(payloadBytes)
+        if (!expected.contentEquals(providedSignature)) return null
+        val payload = payloadBytes.toString(StandardCharsets.UTF_8)
+        val segments = payload.split("|")
+        if (segments.size < 4) return null
+        val username = segments[0]
+        val expiresAt = runCatching { Instant.parse(segments[3]) }.getOrNull() ?: return null
+        if (Instant.now().isAfter(expiresAt)) return null
+        return username
+    }
+
+    private fun hmacSha256(data: ByteArray): ByteArray {
+        val mac = Mac.getInstance("HmacSHA256")
+        mac.init(SecretKeySpec(secret(), "HmacSHA256"))
+        return mac.doFinal(data)
+    }
+}
+
 @Serializable
 private data class LoginRequest(
     val username: String,
@@ -338,19 +492,30 @@ class ChatRepository(
             ignoreUnknownKeys = true
         }
 
-    init {
-        runBlocking { load() }
+    @Volatile
+    private var initialized = false
+
+    suspend fun allThreads(): List<ChatThread> {
+        ensureLoaded()
+        return mutex.withLock { threads.values.toList() }
     }
 
-    suspend fun allThreads(): List<ChatThread> = mutex.withLock { threads.values.toList() }
+    suspend fun recentThreads(limit: Int = 5): List<ChatThread> {
+        ensureLoaded()
+        return mutex.withLock { threads.values.sortedByDescending { it.updatedAt }.take(limit) }
+    }
 
-    suspend fun recentThreads(limit: Int = 5): List<ChatThread> =
-        mutex.withLock { threads.values.sortedByDescending { it.updatedAt }.take(limit) }
+    suspend fun thread(id: String): ChatThread? {
+        ensureLoaded()
+        return mutex.withLock { threads[id] }
+    }
 
-    suspend fun thread(id: String): ChatThread? = mutex.withLock { threads[id] }
-
-    suspend fun addThread(title: String): ChatThread =
-        mutex.withLock {
+    suspend fun addThread(
+        title: String,
+        userId: Int,
+    ): ChatThread {
+        ensureLoaded()
+        return mutex.withLock {
             val uuid =
                 java.util.UUID
                     .randomUUID()
@@ -359,47 +524,54 @@ class ChatRepository(
                 ChatThread(
                     id = nextThreadId++,
                     uuid = uuid,
-                    userId = 1,
+                    userId = userId,
                     title = title,
                 )
             threads[uuid] = thread
             persist()
             thread
         }
+    }
 
     suspend fun updateThreadTitle(
         id: String,
         title: String,
-    ): ChatThread? =
-        mutex.withLock {
+    ): ChatThread? {
+        ensureLoaded()
+        return mutex.withLock {
             val current = threads[id] ?: return@withLock null
             val updated = current.copy(title = title, updatedAt = Instant.now().toString())
             threads[id] = updated
             persist()
             updated
         }
+    }
 
-    suspend fun markDeleted(id: String): ChatThread? =
-        mutex.withLock {
+    suspend fun markDeleted(id: String): ChatThread? {
+        ensureLoaded()
+        return mutex.withLock {
             val current = threads[id] ?: return@withLock null
             val updated = current.copy(isDeleted = true, updatedAt = Instant.now().toString())
             threads[id] = updated
             persist()
             updated
         }
+    }
 
     suspend fun addChat(
         threadId: String,
         content: String,
         sender: String = "user",
-    ): ChatMessage? =
-        mutex.withLock {
+        userId: Int,
+    ): ChatMessage? {
+        ensureLoaded()
+        return mutex.withLock {
             val current = threads[threadId] ?: return@withLock null
             val message =
                 ChatMessage(
                     id = nextMessageId++,
                     threadId = current.id,
-                    userId = 1,
+                    userId = userId,
                     role = sender,
                     message = content,
                 )
@@ -412,23 +584,32 @@ class ChatRepository(
             persist()
             message
         }
+    }
 
-    private suspend fun load() {
-        val file = filePath?.toFile() ?: return
-        if (!file.exists()) return
-        val parsed =
-            withContext(Dispatchers.IO) {
-                runCatching { json.decodeFromString<List<ChatThread>>(file.readText()) }
-                    .onFailure { ex -> logger.warn(ex) { "Failed to load chats from ${file.absolutePath}" } }
-                    .getOrNull()
-            } ?: return
+    private suspend fun ensureLoaded() {
+        if (initialized) return
         mutex.withLock {
-            threads.clear()
-            parsed.forEach { threads[it.uuid] = it }
-            nextThreadId = (parsed.maxOfOrNull { it.id } ?: 0) + 1
-            val maxMsgId =
-                parsed.flatMap { it.chats }.maxOfOrNull { it.id } ?: 0
-            nextMessageId = maxMsgId + 1
+            if (initialized) return
+            val file = filePath?.toFile()
+            val parsed =
+                if (file != null && file.exists()) {
+                    withContext(Dispatchers.IO) {
+                        runCatching { json.decodeFromString<List<ChatThread>>(file.readText()) }
+                            .onFailure { ex -> logger.warn(ex) { "Failed to load chats from ${file.absolutePath}" } }
+                            .getOrNull()
+                    }
+                } else {
+                    emptyList()
+                }
+            if (!parsed.isNullOrEmpty()) {
+                threads.clear()
+                parsed.forEach { threads[it.uuid] = it }
+                nextThreadId = (parsed.maxOfOrNull { it.id } ?: 0) + 1
+                val maxMsgId =
+                    parsed.flatMap { it.chats }.maxOfOrNull { it.id } ?: 0
+                nextMessageId = maxMsgId + 1
+            }
+            initialized = true
         }
     }
 
@@ -458,21 +639,27 @@ class DocumentRepository(
             ignoreUnknownKeys = true
         }
 
-    init {
-        runBlocking { load() }
+    @Volatile
+    private var initialized = false
+
+    suspend fun all(): List<DocumentInfo> {
+        ensureLoaded()
+        return mutex.withLock { documents.values.toList() }
     }
 
-    suspend fun all(): List<DocumentInfo> = mutex.withLock { documents.values.toList() }
-
-    suspend fun get(id: Int): DocumentInfo? = mutex.withLock { documents[id] }
+    suspend fun get(id: Int): DocumentInfo? {
+        ensureLoaded()
+        return mutex.withLock { documents[id] }
+    }
 
     suspend fun add(
         name: String,
         content: String,
         contentType: String = "text/plain",
         userId: Int = 1,
-    ): DocumentInfo =
-        mutex.withLock {
+    ): DocumentInfo {
+        ensureLoaded()
+        return mutex.withLock {
             val id = nextId++
             val filePath = File(uploadDir, "${id}_$name").absolutePath
             val info =
@@ -483,14 +670,67 @@ class DocumentRepository(
                     contentType = contentType,
                     filePath = filePath,
                     fileSize = content.toByteArray().size.toLong(),
+                    status = "processing",
                 )
             documents[id] = info
             saveToDisk(filePath, content)
             persist()
             info
         }
+    }
 
-    suspend fun status(id: Int): String = mutex.withLock { documents[id]?.status ?: "unknown" }
+    suspend fun addFile(
+        name: String,
+        data: ByteArray,
+        contentType: String? = null,
+        userId: Int = 1,
+    ): DocumentInfo {
+        ensureLoaded()
+        return mutex.withLock {
+            val id = nextId++
+            val path = File(uploadDir, "${id}_$name").absolutePath
+            val info =
+                DocumentInfo(
+                    id = id,
+                    userId = userId,
+                    filename = name,
+                    contentType = contentType ?: "application/octet-stream",
+                    filePath = path,
+                    fileSize = data.size.toLong(),
+                    status = "processing",
+                )
+            documents[id] = info
+            saveBytes(path, data)
+            persist()
+            info
+        }
+    }
+
+    suspend fun status(id: Int): String {
+        ensureLoaded()
+        return mutex.withLock { documents[id]?.status ?: "unknown" }
+    }
+
+    suspend fun markProcessed(id: Int) {
+        ensureLoaded()
+        mutex.withLock {
+            val current = documents[id] ?: return@withLock
+            documents[id] = current.copy(status = "processed", processedAt = Instant.now().toString(), errorMessage = null)
+            persist()
+        }
+    }
+
+    suspend fun markFailed(
+        id: Int,
+        message: String,
+    ) {
+        ensureLoaded()
+        mutex.withLock {
+            val current = documents[id] ?: return@withLock
+            documents[id] = current.copy(status = "failed", errorMessage = message, processedAt = Instant.now().toString())
+            persist()
+        }
+    }
 
     private suspend fun saveToDisk(
         path: String,
@@ -505,19 +745,40 @@ class DocumentRepository(
         }
     }
 
-    private suspend fun load() {
-        val file = filePath?.toFile() ?: return
-        if (!file.exists()) return
-        val parsed =
-            withContext(Dispatchers.IO) {
-                runCatching { json.decodeFromString<List<DocumentInfo>>(file.readText()) }
-                    .onFailure { ex -> logger.warn(ex) { "Failed to load documents from ${file.absolutePath}" } }
-                    .getOrNull()
-            } ?: return
+    private suspend fun saveBytes(
+        path: String,
+        data: ByteArray,
+    ) {
+        withContext(Dispatchers.IO) {
+            runCatching {
+                File(path).writeBytes(data)
+            }.onFailure { ex ->
+                logger.warn(ex) { "Failed to persist document at $path" }
+            }
+        }
+    }
+
+    private suspend fun ensureLoaded() {
+        if (initialized) return
         mutex.withLock {
-            documents.clear()
-            parsed.forEach { documents[it.id] = it }
-            nextId = (documents.keys.maxOrNull() ?: 0) + 1
+            if (initialized) return
+            val file = filePath?.toFile()
+            val parsed =
+                if (file != null && file.exists()) {
+                    withContext(Dispatchers.IO) {
+                        runCatching { json.decodeFromString<List<DocumentInfo>>(file.readText()) }
+                            .onFailure { ex -> logger.warn(ex) { "Failed to load documents from ${file.absolutePath}" } }
+                            .getOrNull()
+                    }
+                } else {
+                    emptyList()
+                }
+            if (!parsed.isNullOrEmpty()) {
+                documents.clear()
+                parsed.forEach { documents[it.id] = it }
+                nextId = (documents.keys.maxOrNull() ?: 0) + 1
+            }
+            initialized = true
         }
     }
 
@@ -545,7 +806,7 @@ private fun Route.authRoutes(repository: UserRepository) {
         if (user == null || user.hashedPassword != PasswordHasher.hash(req.password)) {
             call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid credentials"))
         } else {
-            call.respond(mapOf("access_token" to "token-${user.username}", "token_type" to "bearer"))
+            call.respond(mapOf("access_token" to TokenService.issueToken(user.username), "token_type" to "bearer"))
         }
     }
     post("/register") {
@@ -566,7 +827,18 @@ private fun Route.authRoutes(repository: UserRepository) {
         }
     }
     get("/users/me") {
-        val current = repository.list().firstOrNull()
+        val authHeader = call.request.headers[HttpHeaders.Authorization]
+        val token =
+            authHeader
+                ?.takeIf { it.startsWith("Bearer ", ignoreCase = true) }
+                ?.substring(7)
+                ?.trim()
+        val username = TokenService.usernameFromToken(token)
+        if (username == null) {
+            call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing token"))
+            return@get
+        }
+        val current = repository.find(username)
         if (current == null) call.respond(HttpStatusCode.NotFound) else call.respond(current)
     }
 }
@@ -588,6 +860,29 @@ private fun Route.userRoutes(repository: UserRepository) {
     }
 }
 
+private suspend fun ApplicationCall.currentUser(userRepository: UserRepository): User? {
+    val authHeader = request.headers[HttpHeaders.Authorization] ?: return null
+    val token =
+        authHeader
+            .takeIf { it.startsWith("Bearer ", ignoreCase = true) }
+            ?.substring(7)
+            ?.trim()
+    val username = TokenService.usernameFromToken(token) ?: return null
+    return userRepository.find(username)
+}
+
+private suspend fun ApplicationCall.withAuthenticatedUser(
+    userRepository: UserRepository,
+    block: suspend (User) -> Unit,
+) {
+    val user = currentUser(userRepository)
+    if (user?.id == null) {
+        respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing token"))
+        return
+    }
+    block(user)
+}
+
 @Serializable
 private data class CreateThreadRequest(
     val title: String,
@@ -604,48 +899,76 @@ private data class CreateChatRequest(
     val sender: String? = "user",
 )
 
-private fun Route.chatRoutes(repository: ChatRepository) {
+private fun Route.chatRoutes(
+    userRepository: UserRepository,
+    chatRepository: ChatRepository,
+) {
     route("/chats") {
         get("/") {
-            val chats =
-                repository
-                    .allThreads()
-                    .flatMap { it.chats }
-            call.respond(mapOf("chats" to chats))
+            call.withAuthenticatedUser(userRepository) { currentUser ->
+                val chats =
+                    chatRepository
+                        .allThreads()
+                        .filter { it.userId == currentUser.id }
+                        .flatMap { it.chats }
+                call.respond(mapOf("chats" to chats))
+            }
         }
         get("/recent") {
-            call.respond(mapOf("threads" to repository.recentThreads()))
+            call.withAuthenticatedUser(userRepository) { currentUser ->
+                val threads =
+                    chatRepository
+                        .recentThreads()
+                        .filter { it.userId == currentUser.id }
+                call.respond(mapOf("threads" to threads))
+            }
         }
         route("/threads") {
             get {
-                call.respond(mapOf("threads" to repository.allThreads()))
+                call.withAuthenticatedUser(userRepository) { currentUser ->
+                    val threads =
+                        chatRepository
+                            .allThreads()
+                            .filter { it.userId == currentUser.id }
+                    call.respond(mapOf("threads" to threads))
+                }
             }
             post {
+                val currentUser = call.currentUser(userRepository)
+                if (currentUser == null || currentUser.id == null) {
+                    call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing token"))
+                    return@post
+                }
                 val req = call.receive<CreateThreadRequest>()
-                val thread = repository.addThread(req.title)
+                val thread = chatRepository.addThread(req.title, currentUser.id)
                 call.respond(HttpStatusCode.Created, thread)
             }
             get("/{thread_uuid}") {
                 val id = call.parameters["thread_uuid"]
-                val thread = id?.let { repository.thread(it) }
+                val thread = id?.let { chatRepository.thread(it) }
                 if (thread == null) call.respond(HttpStatusCode.NotFound) else call.respond(thread)
             }
             put("/{thread_uuid}") {
                 val id = call.parameters["thread_uuid"]
                 val req = call.receive<UpdateThreadRequest>()
-                val updated = id?.let { repository.updateThreadTitle(it, req.title) }
+                val updated = id?.let { chatRepository.updateThreadTitle(it, req.title) }
                 if (updated == null) call.respond(HttpStatusCode.NotFound) else call.respond(updated)
             }
             delete("/{thread_uuid}") {
                 val id = call.parameters["thread_uuid"]
-                val deleted = id?.let { repository.markDeleted(it) }
+                val deleted = id?.let { chatRepository.markDeleted(it) }
                 if (deleted == null) call.respond(HttpStatusCode.NotFound) else call.respond(deleted)
             }
         }
         post("/chat/{thread_uuid}") {
             val id = call.parameters["thread_uuid"]
             val req = call.receive<CreateChatRequest>()
-            val message = id?.let { repository.addChat(it, req.content, req.sender ?: "user") }
+            val currentUser = call.currentUser(userRepository)
+            if (currentUser == null || currentUser.id == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing token"))
+                return@post
+            }
+            val message = id?.let { chatRepository.addChat(it, req.content, req.sender ?: "user", currentUser.id) }
             if (message == null) {
                 call.respond(HttpStatusCode.NotFound, mapOf("error" to "Thread not found"))
             } else {
@@ -660,7 +983,6 @@ private data class UploadDocumentRequest(
     val name: String,
     val content: String,
     val contentType: String? = "text/plain",
-    val userId: Int? = 1,
 )
 
 @Serializable
@@ -700,19 +1022,98 @@ private data class GraphResponse(
     val edges: List<GraphEdgeDto>,
 )
 
+private fun isSupportedTextContent(contentType: ContentType?): Boolean {
+    if (contentType == null) return false
+    if (contentType.match(ContentType.Text.Any)) return true
+    if (contentType.contentType.equals("application", ignoreCase = true)) {
+        val subtype = contentType.contentSubtype.lowercase()
+        if (subtype in setOf("json", "xml", "x-yaml", "yaml", "javascript", "csv")) return true
+    }
+    return false
+}
+
 private fun Route.documentRoutes(
     repository: DocumentRepository,
     rag: PathRAG,
+    userRepository: UserRepository,
 ) {
     route("/documents") {
         get("/") {
-            call.respond(mapOf("documents" to repository.all()))
+            call.withAuthenticatedUser(userRepository) { currentUser ->
+                val docs = repository.all().filter { it.userId == currentUser.id }
+                call.respond(mapOf("documents" to docs))
+            }
         }
         post("/upload") {
             val req = call.receive<UploadDocumentRequest>()
-            val doc = repository.add(req.name, req.content, req.contentType ?: "text/plain", req.userId ?: 1)
-            launch { rag.ainsert(req.content) }
+            val currentUser = call.currentUser(userRepository)
+            if (currentUser == null || currentUser.id == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing token"))
+                return@post
+            }
+            val doc = repository.add(req.name, req.content, req.contentType ?: "text/plain", currentUser.id)
+            launch {
+                runCatching { rag.ainsert(req.content) }
+                    .onSuccess { repository.markProcessed(doc.id) }
+                    .onFailure { ex ->
+                        logger.warn(ex) { "Failed to ingest uploaded document ${doc.id}" }
+                        repository.markFailed(doc.id, ex.message ?: "Ingestion failed")
+                    }
+            }
             call.respond(HttpStatusCode.Created, doc)
+        }
+        post("/upload-file") {
+            val currentUser = call.currentUser(userRepository)
+            if (currentUser == null || currentUser.id == null) {
+                call.respond(HttpStatusCode.Unauthorized, mapOf("error" to "Invalid or missing token"))
+                return@post
+            }
+            val multipart = call.receiveMultipart()
+            val savedDocs = mutableListOf<DocumentInfo>()
+            while (true) {
+                val part = multipart.readPart() ?: break
+                try {
+                    when (part) {
+                        is PartData.FileItem -> {
+                            val contentType = part.contentType
+                            if (!isSupportedTextContent(contentType)) {
+                                call.respond(
+                                    HttpStatusCode.UnsupportedMediaType,
+                                    mapOf(
+                                        "error" to
+                                            "Unsupported content type '${contentType ?: "unknown"}'. Only text uploads are accepted.",
+                                    ),
+                                )
+                                return@post
+                            }
+                            val bytes = withContext(Dispatchers.IO) { part.provider().readBytes() }
+                            val filename = part.originalFileName ?: "upload_${System.currentTimeMillis()}"
+                            val saved = repository.addFile(filename, bytes, contentType?.toString(), currentUser.id)
+                            savedDocs.add(saved)
+                            launch {
+                                runCatching {
+                                    val charset = contentType?.charset() ?: StandardCharsets.UTF_8
+                                    val text = String(bytes, charset)
+                                    rag.ainsert(text)
+                                }.onSuccess { repository.markProcessed(saved.id) }
+                                    .onFailure { ex ->
+                                        logger.warn(ex) { "Failed to ingest uploaded file $filename into RAG" }
+                                        repository.markFailed(saved.id, ex.message ?: "Ingestion failed")
+                                    }
+                            }
+                        }
+
+                        else -> {}
+                    }
+                } finally {
+                    part.dispose()
+                }
+            }
+            if (savedDocs.isEmpty()) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "No file found in request"))
+            } else {
+                call.respond(HttpStatusCode.Created, mapOf("documents" to savedDocs))
+            }
         }
         post("/query") {
             val req = call.receive<QueryRequest>()
@@ -736,7 +1137,7 @@ private fun Route.documentRoutes(
 }
 
 private fun Route.knowledgeGraphRoutes(rag: PathRAG) {
-    get("/knowledge-graph") {
+    suspend fun respondGraph(call: ApplicationCall) {
         val g = rag.graph()
         val nodeIds = g.nodes()
         val nodes =
@@ -758,19 +1159,56 @@ private fun Route.knowledgeGraphRoutes(rag: PathRAG) {
                 }
         call.respond(GraphResponse(nodes, edges))
     }
-    post("/knowledge-graph/query") {
-        val payload = runCatching { call.receive<KnowledgeGraphQuery>() }.getOrNull()
-        val question = payload?.query ?: payload?.q
-        if (question.isNullOrBlank()) {
-            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'query' in payload"))
-        } else {
-            val result = rag.query(question, QueryParam(mode = "hybrid"))
-            call.respond(mapOf("answer" to result))
+    route("/knowledge-graph") {
+        get { respondGraph(call) }
+        get("/") { respondGraph(call) } // tolerate trailing slash
+        post("/query") {
+            val payload = runCatching { call.receive<KnowledgeGraphQuery>() }.getOrNull()
+            val question = payload?.query ?: payload?.q
+            if (question.isNullOrBlank()) {
+                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'query' in payload"))
+            } else {
+                val result = rag.query(question, QueryParam(mode = "hybrid"))
+                call.respond(mapOf("answer" to result))
+            }
         }
     }
 }
 
 private fun toStringMap(data: Map<String, Any?>?): Map<String, String> = data?.mapValues { (_, v) -> v?.toString() ?: "" } ?: emptyMap()
+
+private suspend fun preloadKnowledgeGraphIfEmpty(
+    rag: PathRAG,
+    documentRepository: DocumentRepository,
+) {
+    val g = rag.graph()
+    val hasNodes =
+        runCatching { g.nodes().isNotEmpty() }
+            .onFailure { ex -> logger.warn(ex) { "Failed to inspect knowledge graph; skipping preload." } }
+            .getOrDefault(false)
+    if (hasNodes) return
+
+    val docs =
+        runCatching { documentRepository.all() }
+            .onFailure { ex -> logger.warn(ex) { "Failed to load documents for graph preload." } }
+            .getOrDefault(emptyList())
+    if (docs.isEmpty()) return
+
+    logger.info { "Knowledge graph empty; preloading from ${docs.size} documents." }
+    docs.forEach { doc ->
+        runCatching {
+            val content =
+                withContext(Dispatchers.IO) {
+                    File(doc.filePath).takeIf { it.exists() }?.readText()
+                }
+            if (!content.isNullOrBlank()) {
+                rag.ainsert(content)
+            } else {
+                logger.warn { "Skipping preload for document ${doc.id}; file missing or empty at ${doc.filePath}" }
+            }
+        }.onFailure { ex -> logger.warn(ex) { "Failed to ingest document ${doc.id} for graph preload." } }
+    }
+}
 
 /**
  * Minimal .env loader that emulates python-dotenv behavior for local development.
