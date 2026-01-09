@@ -1,5 +1,9 @@
 package pathrag
 
+import com.auth0.jwt.JWT
+import com.auth0.jwt.algorithms.Algorithm
+import com.auth0.jwt.exceptions.JWTVerificationException
+import com.auth0.jwt.interfaces.JWTVerifier
 import io.github.oshai.kotlinlogging.KotlinLogging
 import io.ktor.http.ContentType
 import io.ktor.http.HttpHeaders
@@ -31,6 +35,7 @@ import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import io.ktor.utils.io.core.readBytes
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.sync.Mutex
@@ -49,11 +54,9 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.security.MessageDigest
 import java.time.Instant
-import java.util.Base64
+import java.util.Date
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
-import javax.crypto.Mac
-import javax.crypto.spec.SecretKeySpec
 
 private val logger = KotlinLogging.logger("pathrag")
 
@@ -107,6 +110,8 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
     val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
     val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
     val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
+    val chunkTokenSize = env.chunkTokenSize()
+    val chunkOverlapTokenSize = env.chunkOverlapTokenSize()
     val neo4jConfig =
         mapOf(
             "neo4j_uri" to env["NEO4J_URI"],
@@ -120,6 +125,8 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
             kvStorage = kvStorage,
             vectorStorage = vectorStorage,
             graphStorage = graphStorage,
+            chunkTokenSize = chunkTokenSize,
+            chunkOverlapTokenSize = chunkOverlapTokenSize,
             extraConfig = neo4jConfig,
         )
     val userRepository = UserRepository(Paths.get(workingDir, "users.json"))
@@ -138,7 +145,7 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
         userRoutes(userRepository)
         chatRoutes(userRepository, chatRepository)
         documentRoutes(documentRepository, rag, userRepository)
-        knowledgeGraphRoutes(rag)
+        knowledgeGraphRoutes(rag, userRepository)
         // query endpoint relocated under /documents/query
     }
 }
@@ -365,9 +372,6 @@ private object SecretKeyLoader {
 }
 
 object TokenService {
-    private val encoder = Base64.getUrlEncoder().withoutPadding()
-    private val decoder = Base64.getUrlDecoder()
-
     private const val DEFAULT_TOKEN_TTL_MINUTES = 30L
 
     @Volatile
@@ -376,6 +380,15 @@ object TokenService {
     @Volatile
     private var tokenTtlSeconds: Long = DEFAULT_TOKEN_TTL_MINUTES * 60
 
+    @Volatile
+    private var issuer: String = "pathrag"
+
+    @Volatile
+    private var algorithm: Algorithm? = null
+
+    @Volatile
+    private var verifier: JWTVerifier? = null
+
     fun configure(env: EnvironmentConfig) {
         if (secret == null) {
             secret = SecretKeyLoader.load(env)
@@ -383,6 +396,8 @@ object TokenService {
         tokenTtlSeconds =
             env["ACCESS_TOKEN_EXPIRE_MINUTES"]?.toLongOrNull()?.takeIf { it > 0 }?.times(60)
                 ?: DEFAULT_TOKEN_TTL_MINUTES * 60
+        issuer = env["TOKEN_ISSUER"] ?: "pathrag"
+        rebuildCrypto()
     }
 
     private fun secret(): ByteArray =
@@ -390,38 +405,46 @@ object TokenService {
             secret ?: SecretKeyLoader.load(EnvironmentConfig.empty()).also { secret = it }
         }
 
+    private fun rebuildCrypto() =
+        synchronized(this) {
+            val alg = Algorithm.HMAC256(secret())
+            algorithm = alg
+            verifier = JWT.require(alg).withIssuer(issuer).build()
+        }
+
+    private fun ensureAlgorithm(): Algorithm =
+        algorithm ?: run {
+            rebuildCrypto()
+            algorithm!!
+        }
+
+    private fun ensureVerifier(): JWTVerifier =
+        verifier ?: run {
+            rebuildCrypto()
+            verifier!!
+        }
+
     fun issueToken(username: String): String {
         val issuedAt = Instant.now()
         val expiresAt = issuedAt.plusSeconds(tokenTtlSeconds)
-        val nonce = UUID.randomUUID().toString()
-        val payload = listOf(username, nonce, issuedAt.toString(), expiresAt.toString()).joinToString("|")
-        val signature = hmacSha256(payload.toByteArray(StandardCharsets.UTF_8))
-        return "${encoder.encodeToString(payload.toByteArray(StandardCharsets.UTF_8))}.${encoder.encodeToString(signature)}"
+        val algorithm = ensureAlgorithm()
+        return JWT
+            .create()
+            .withIssuer(issuer)
+            .withSubject(username)
+            .withIssuedAt(Date.from(issuedAt))
+            .withExpiresAt(Date.from(expiresAt))
+            .withJWTId(UUID.randomUUID().toString())
+            .sign(algorithm)
     }
 
-    fun usernameFromToken(token: String?): String? {
-        val parts = token?.split(".") ?: return null
-        if (parts.size != 2) return null
-        val payloadBytes =
-            runCatching { decoder.decode(parts[0]) }.getOrElse { return null }
-        val providedSignature =
-            runCatching { decoder.decode(parts[1]) }.getOrElse { return null }
-        val expected = hmacSha256(payloadBytes)
-        if (!expected.contentEquals(providedSignature)) return null
-        val payload = payloadBytes.toString(StandardCharsets.UTF_8)
-        val segments = payload.split("|")
-        if (segments.size < 4) return null
-        val username = segments[0]
-        val expiresAt = runCatching { Instant.parse(segments[3]) }.getOrNull() ?: return null
-        if (Instant.now().isAfter(expiresAt)) return null
-        return username
-    }
-
-    private fun hmacSha256(data: ByteArray): ByteArray {
-        val mac = Mac.getInstance("HmacSHA256")
-        mac.init(SecretKeySpec(secret(), "HmacSHA256"))
-        return mac.doFinal(data)
-    }
+    fun usernameFromToken(token: String?): String? =
+        try {
+            ensureVerifier().verify(token).subject
+        } catch (ex: JWTVerificationException) {
+            logger.warn(ex) { "Invalid or expired token" }
+            null
+        }
 }
 
 @Serializable
@@ -1040,7 +1063,7 @@ private fun Route.documentRoutes(
     route("/documents") {
         get("/") {
             call.withAuthenticatedUser(userRepository) { currentUser ->
-                val docs = repository.all().filter { it.userId == currentUser.id }
+                val docs = repository.all()
                 call.respond(mapOf("documents" to docs))
             }
         }
@@ -1122,13 +1145,23 @@ private fun Route.documentRoutes(
             call.respond(mapOf("answer" to result))
         }
         get("/{document_id}") {
-            val id = call.parameters["document_id"]?.toIntOrNull()
-            val doc = id?.let { repository.get(it) }
-            if (doc == null) call.respond(HttpStatusCode.NotFound) else call.respond(doc)
+            call.withAuthenticatedUser(userRepository) { currentUser ->
+                val id = call.parameters["document_id"]?.toIntOrNull()
+                val doc = id?.let { repository.get(it) }
+                if (doc == null) call.respond(HttpStatusCode.NotFound) else call.respond(doc)
+            }
         }
         get("/{document_id}/status") {
-            val id = call.parameters["document_id"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest)
-            call.respond(DocumentStatusResponse(id, repository.status(id)))
+            call.withAuthenticatedUser(userRepository) { currentUser ->
+                val id =
+                    call.parameters["document_id"]?.toIntOrNull() ?: return@withAuthenticatedUser call.respond(HttpStatusCode.BadRequest)
+                val doc = repository.get(id)
+                if (doc == null) {
+                    call.respond(HttpStatusCode.NotFound)
+                } else {
+                    call.respond(DocumentStatusResponse(id, doc.status))
+                }
+            }
         }
         post("/reload") {
             call.respond(mapOf("message" to "Reload request accepted. PathRAG will recognize new documents."))
@@ -1136,7 +1169,10 @@ private fun Route.documentRoutes(
     }
 }
 
-private fun Route.knowledgeGraphRoutes(rag: PathRAG) {
+private fun Route.knowledgeGraphRoutes(
+    rag: PathRAG,
+    userRepository: UserRepository,
+) {
     suspend fun respondGraph(call: ApplicationCall) {
         val g = rag.graph()
         val nodeIds = g.nodes()
@@ -1160,16 +1196,20 @@ private fun Route.knowledgeGraphRoutes(rag: PathRAG) {
         call.respond(GraphResponse(nodes, edges))
     }
     route("/knowledge-graph") {
-        get { respondGraph(call) }
-        get("/") { respondGraph(call) } // tolerate trailing slash
+        get {
+            call.withAuthenticatedUser(userRepository) { respondGraph(call) }
+        }
+        get("/") { call.withAuthenticatedUser(userRepository) { respondGraph(call) } } // tolerate trailing slash
         post("/query") {
-            val payload = runCatching { call.receive<KnowledgeGraphQuery>() }.getOrNull()
-            val question = payload?.query ?: payload?.q
-            if (question.isNullOrBlank()) {
-                call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'query' in payload"))
-            } else {
-                val result = rag.query(question, QueryParam(mode = "hybrid"))
-                call.respond(mapOf("answer" to result))
+            call.withAuthenticatedUser(userRepository) {
+                val payload = runCatching { call.receive<KnowledgeGraphQuery>() }.getOrNull()
+                val question = payload?.query ?: payload?.q
+                if (question.isNullOrBlank()) {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing 'query' in payload"))
+                } else {
+                    val result = rag.query(question, QueryParam(mode = "hybrid"))
+                    call.respond(mapOf("answer" to result))
+                }
             }
         }
     }
@@ -1219,6 +1259,10 @@ class EnvironmentConfig private constructor(
     operator fun get(key: String): String? = System.getenv(key) ?: values[key]
 
     fun corsOrigins(): String = this["CORS_ORIGINS"] ?: "*"
+
+    fun chunkTokenSize(): Int = this["CHUNK_TOKEN_SIZE"]?.toIntOrNull() ?: 800
+
+    fun chunkOverlapTokenSize(): Int = this["CHUNK_OVERLAP_TOKEN_SIZE"]?.toIntOrNull() ?: 120
 
     companion object {
         fun empty() = EnvironmentConfig(emptyMap())
