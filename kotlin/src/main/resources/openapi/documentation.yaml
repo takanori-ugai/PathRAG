@@ -259,6 +259,41 @@ paths:
       responses:
         "200":
           description: OK
+  /documents/drop:
+    post:
+      summary: Drop all documents and backend storages
+      tags: [Documents]
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                confirmation:
+                  type: string
+                  description: Must be "DROP_ALL_DATA" to confirm
+              required: [confirmation]
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                  deleted_files:
+                    type: integer
+        "400":
+          description: Bad Request - Invalid or missing confirmation
+        "401":
+          description: Unauthorized - Invalid or missing token
+        "500":
+          description: Internal Server Error
   /knowledge-graph/:
     get:
       summary: Get the knowledge graph

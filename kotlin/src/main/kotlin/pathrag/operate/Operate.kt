@@ -66,6 +66,18 @@ private data class KeywordPayload(
     @SerialName("low_level_keywords") val lowLevel: List<String> = emptyList(),
 )
 
+/**
+ * Split text into overlapping token-based chunks suitable for token-limited processing.
+ *
+ * @param content The source text to split.
+ * @param overlapTokenSize Number of tokens that each chunk should overlap with the previous chunk.
+ * @param maxTokenSize Maximum number of tokens per chunk; must be greater than `overlapTokenSize`.
+ * @param tiktokenModel Tokenizer model identifier used to encode/decode the text.
+ * @return A list of maps, each containing:
+ *   - "tokens": Int — the token count for the chunk,
+ *   - "content": String — the decoded text of the chunk,
+ *   - "chunk_order_index": Int — the zero-based sequence index of the chunk.
+ */
 fun chunkingByTokenSize(
     content: String,
     overlapTokenSize: Int = 128,
@@ -221,8 +233,34 @@ private fun extractJsonPayload(response: String): String {
     return trimmed
 }
 
+/**
+ * Normalize an identifier by removing surrounding double quotes and converting to uppercase.
+ *
+ * @param id The identifier to normalize; may include surrounding double quotes.
+ * @return The normalized identifier with no surrounding double quotes and in uppercase.
+ */
 private fun normalizeId(id: String): String = id.trim('"').uppercase()
 
+/**
+     * Run a retrieval-augmented generation (RAG) query backed by the knowledge graph using the configured mode.
+     *
+     * Dispatches the query to one of the mode-specific runners ("local", "global", "hybrid"), extracts keywords,
+     * composes the system context, and caches the result when a ResponseCache is provided.
+     *
+     * @param query The user's query text.
+     * @param knowledgeGraphInst Graph storage instance used for node/edge lookups and path computations.
+     * @param entitiesVdb Vector database storing entity embeddings and metadata.
+     * @param relationshipsVdb Vector database storing relationship embeddings and metadata.
+     * @param textChunksDb Key-value storage containing text chunks referenced by source IDs.
+     * @param queryParam Parameters controlling retrieval and response behavior (mode, topK, streaming, etc.).
+     * @param globalConfig Global configuration map used for keyword extraction and other runtime options.
+     * @param llmModel LLM call function used to generate keywords and final responses. It receives prompt, optional system prompt,
+     *                 conversation history, keywordExtraction flag, streaming flag, optional maxTokens, and an optional hashingKv.
+     * @param hashingKv Optional response cache used to read/write cached responses keyed by the query and mode.
+     *
+     * @return The generated response string for the query.
+     * @throws IllegalArgumentException If `queryParam.mode` is not one of "local", "global", or "hybrid".
+     */
 suspend fun kgQuery(
     query: String,
     knowledgeGraphInst: BaseGraphStorage,
@@ -293,7 +331,7 @@ suspend fun kgQuery(
                 }
 
                 else -> {
-                    "Unknown mode ${queryParam.mode}"
+                    throw IllegalArgumentException("Unknown query mode: ${queryParam.mode}. Supported modes: local, global, hybrid")
                 }
             }
         hashingKv?.upsert(queryParam.mode, argsHash, response, query)

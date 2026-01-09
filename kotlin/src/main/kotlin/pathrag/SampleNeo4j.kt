@@ -9,18 +9,26 @@ import java.nio.file.Paths
  * Set Neo4j connection via env (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD),
  * then run: ./gradlew execute -PmainClass=pathrag.SampleNeo4jKt
  */
-fun main() =
+/**
+     * Demonstrates PathRAG usage with Neo4j-backed graph storage by loading configuration, creating a PathRAG instance,
+     * inserting sample Dickens-related texts, and performing local, global, and hybrid queries while printing results.
+     *
+     * The program loads environment variables from ../.env (with sensible defaults), constructs a typed Neo4j ExtraConfig
+     * and AddonParams, configures embedding cache and tokenization parameters, inserts example documents, and then
+     * queries the RAG in three modes ("local", "global", "hybrid"), printing each question and its answer.
+     */
+    fun main() =
     runBlocking {
         val env = EnvironmentConfig.load(Paths.get("../.env"))
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
         val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
         val graphStorage = env["GRAPH_STORAGE"] ?: "Neo4jStorage"
         val neo4jConfig =
-            mapOf(
-                "neo4j_uri" to env["NEO4J_URI"],
-                "neo4j_user" to env["NEO4J_USER"],
-                "neo4j_password" to env["NEO4J_PASSWORD"],
-            ).filterValues { !it.isNullOrBlank() }
+            pathrag.base.ExtraConfig(
+                neo4jUri = env["NEO4J_URI"],
+                neo4jUser = env["NEO4J_USER"],
+                neo4jPassword = env["NEO4J_PASSWORD"],
+            )
         val rag =
             PathRAG(
                 workingDir = env["WORKING_DIR"] ?: "./sample_cache_neo4j",
@@ -41,9 +49,9 @@ fun main() =
                         "use_llm_check" to false,
                     ),
                 addonParams =
-                    mapOf(
-                        "entity_types" to listOf("organization", "person", "geo", "event", "category"),
-                        "example_number" to 3,
+                    pathrag.base.AddonParams(
+                        entityTypes = listOf("organization", "person", "geo", "event", "category"),
+                        exampleNumber = 3,
                     ),
             )
 

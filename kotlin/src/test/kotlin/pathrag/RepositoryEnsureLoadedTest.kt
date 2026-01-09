@@ -18,6 +18,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertNotNull
 import kotlin.test.assertTrue
 
+/**
+ * Verifies repository loaders execute once under concurrent access.
+ */
 class RepositoryEnsureLoadedTest {
     private val json =
         Json {
@@ -26,6 +29,9 @@ class RepositoryEnsureLoadedTest {
         }
     private val cleanupPaths = mutableListOf<Pair<java.io.File, java.io.File>>()
 
+    /**
+     * Clean up mocked state and temp files.
+     */
     @AfterTest
     fun tearDown() {
         unmockkAll()
@@ -36,6 +42,9 @@ class RepositoryEnsureLoadedTest {
         cleanupPaths.clear()
     }
 
+    /**
+     * Ensures user repository loads data once even with concurrent calls.
+     */
     @Test
     fun userRepository_ensureLoaded_runsOnceWithConcurrentCalls() {
         runBlocking {
@@ -68,6 +77,9 @@ class RepositoryEnsureLoadedTest {
         }
     }
 
+    /**
+     * Ensures chat repository loads data once under concurrent access.
+     */
     @Test
     fun chatRepository_ensureLoaded_runsOnceWithConcurrentCalls() {
         runBlocking {
@@ -117,6 +129,9 @@ class RepositoryEnsureLoadedTest {
         }
     }
 
+    /**
+     * Ensures document repository loads data once under concurrent access.
+     */
     @Test
     fun documentRepository_ensureLoaded_runsOnceWithConcurrentCalls() {
         runBlocking {
