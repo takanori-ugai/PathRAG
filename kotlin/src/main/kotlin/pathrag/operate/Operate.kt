@@ -67,7 +67,19 @@ private data class KeywordPayload(
 )
 
 /**
- * Split content into overlapping chunks based on token counts.
+ * Split the given text into sequential, overlapping chunks measured by token count.
+ *
+ * Each chunk contains up to `maxTokenSize` tokens and successive chunks overlap by
+ * `overlapTokenSize` tokens to preserve context across boundaries.
+ *
+ * @param content The source text to split.
+ * @param overlapTokenSize Number of tokens that overlap between adjacent chunks.
+ * @param maxTokenSize Maximum number of tokens allowed in a single chunk; must be greater than `overlapTokenSize`.
+ * @param tiktokenModel Tokenizer model identifier used to encode/decode tokens.
+ * @return A list of maps representing chunks. Each map contains:
+ *   - `"tokens"`: the token count for the chunk,
+ *   - `"content"`: the decoded text for the chunk,
+ *   - `"chunk_order_index"`: the 0-based sequence index of the chunk.
  */
 fun chunkingByTokenSize(
     content: String,
@@ -224,11 +236,32 @@ private fun extractJsonPayload(response: String): String {
     return trimmed
 }
 
+/**
+ * Normalize an identifier by removing surrounding double quotes and converting it to uppercase.
+ *
+ * @param id The identifier to normalize; may include surrounding double quotes.
+ * @return The identifier with surrounding double quotes trimmed and all characters converted to uppercase.
+ */
 private fun normalizeId(id: String): String = id.trim('"').uppercase()
 
 /**
- * Run a knowledge-graph backed RAG query using the configured mode.
- */
+     * Run a retrieval-augmented generation (RAG) query against the knowledge graph using the configured mode.
+     *
+     * Performs keyword extraction, constructs a context from the graph and vector stores, delegates to the selected
+     * mode runner ("local", "global", or "hybrid"), optionally uses a response cache, and returns the LLM-produced answer.
+     *
+     * @param query The user query to answer.
+     * @param knowledgeGraphInst Graph storage instance used to read nodes and edges for context.
+     * @param entitiesVdb Vector store containing entity embeddings for local retrieval.
+     * @param relationshipsVdb Vector store containing relationship embeddings for high-level/global retrieval.
+     * @param textChunksDb Key-value store of text chunks referenced by source IDs for context passages.
+     * @param queryParam Parameters controlling retrieval mode, response type, and other query-specific options.
+     * @param globalConfig Global configuration map (used for keyword extraction and prompt tuning).
+     * @param llmModel LLM invocation function used to run prompts; receives prompt, systemPrompt, history, flags, and returns the model output.
+     * @param hashingKv Optional response cache used to read/write cached responses by a computed argument hash.
+     * @return The LLM-generated response for the provided query and context.
+     * @throws IllegalArgumentException If queryParam.mode is not one of "local", "global", or "hybrid".
+     */
 suspend fun kgQuery(
     query: String,
     knowledgeGraphInst: BaseGraphStorage,

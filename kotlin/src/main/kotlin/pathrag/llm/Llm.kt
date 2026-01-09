@@ -31,7 +31,19 @@ private val chatModels = ConcurrentHashMap<String, ChatModel>()
 private val embeddingModels = ConcurrentHashMap<String, EmbeddingModel>()
 
 /**
- * Call the OpenAI chat model with retry/backoff and optional keyword extraction.
+ * Send a chat completion request to OpenAI (with retries/backoff) and return the model's response.
+ *
+ * If the OPENAI_API_KEY environment variable is not set, returns a deterministic stub:
+ * - When `keywordExtraction` is true: a JSON-like string with `high_level_keywords` and `low_level_keywords`.
+ * - Otherwise: a concatenation of `systemPrompt`, `prompt`, and an indicator of history size truncated to `maxTokens` (or 4000).
+ *
+ * The call will retry on transient failures (configured by OPENAI_RETRY_ATTEMPTS and OPENAI_RETRY_BACKOFF_MS) and, if all attempts fail, returns Prompts.FAIL_RESPONSE.
+ *
+ * @param historyMessages A list of maps representing prior messages; each map may contain "role" and "content" keys used to build conversation history.
+ * @param keywordExtraction When true, request/produce keyword-extraction-formatted output instead of a normal chat response.
+ * @param maxTokens When no OPENAI_API_KEY is present, limits the length of the returned stubbed response; otherwise not used directly.
+ * @param hashingKv Opaque value accepted for compatibility with callers (not used by this function).
+ * @return The chat model's textual response, a structured stub when the API key is absent, or Prompts.FAIL_RESPONSE if remote calls fail after retries.
  */
 @Suppress("TooGenericExceptionCaught")
 suspend fun openAiComplete(
@@ -109,7 +121,17 @@ suspend fun openAiComplete(
 }
 
 /**
- * Call an Ollama chat model for completions or keyword extraction.
+ * Request a completion or keyword-extraction response from an Ollama chat model.
+ *
+ * @param model The Ollama model name to use; if blank the environment variable `OLLAMA_MODEL` or the default model is used.
+ * @param prompt The primary user prompt to send to the model.
+ * @param systemPrompt Optional system prompt prepended to the conversation.
+ * @param historyMessages Conversation history as a list of maps with keys `"role"` and `"content"`; each entry is appended before `prompt`.
+ * @param keywordExtraction When `true`, request the model produce keyword extraction instead of a standard completion.
+ * @param stream Reserved for streaming usage (not used by this function implementation).
+ * @param maxTokens Reserved for token-limit usage (not used by this function implementation).
+ * @param hashingKv Reserved hook for optional hashing/storage keys (not used by this function implementation).
+ * @return The model's text response, or a predefined failure string if the call fails after retries.
  */
 @Suppress("TooGenericExceptionCaught")
 suspend fun ollamaComplete(
@@ -167,7 +189,15 @@ suspend fun ollamaComplete(
 }
 
 /**
- * Generate embeddings using the configured OpenAI embedding model.
+ * Generate embeddings for the provided texts using the configured OpenAI embedding model.
+ *
+ * Blank strings are filtered out; if all inputs are blank an empty list is returned.
+ * If the `OPENAI_API_KEY` environment variable is not set, deterministic stub embeddings
+ * are generated for each non-blank input.
+ *
+ * @param inputs The list of input texts to embed. Order of returned embeddings corresponds to the order of non-blank inputs.
+ * @return A list of embedding vectors (DoubleArray), one per non-blank input.
+ * @throws IllegalStateException If the OpenAI embedding call fails after the configured retry attempts.
  */
 @Suppress("TooGenericExceptionCaught")
 suspend fun openAiEmbedding(inputs: List<String>): List<DoubleArray> {
@@ -217,7 +247,15 @@ suspend fun openAiEmbedding(inputs: List<String>): List<DoubleArray> {
 }
 
 /**
- * Generate embeddings using an Ollama embedding model.
+ * Generate embedding vectors for the provided texts using an Ollama embedding model.
+ *
+ * Blank or whitespace-only inputs are ignored; if no valid inputs remain, an empty list is returned.
+ *
+ * The function will retry on transient failures according to environment-configured retry attempts and backoff, and will throw if all attempts fail.
+ *
+ * @param inputs List of input texts to embed.
+ * @return A list of embedding vectors; each element is a DoubleArray representing the embedding for the corresponding non-blank input (order preserved).
+ * @throws IllegalStateException if the embedding operation fails after the configured number of retry attempts.
  */
 @Suppress("TooGenericExceptionCaught")
 suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
@@ -260,8 +298,14 @@ suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
 }
 
 /**
- * Build the embedding function wrapper based on environment configuration.
- */
+     * Create an EmbeddingFunc configured from environment variables.
+     *
+     * The returned EmbeddingFunc contains an embedding dimension, a maximum token size,
+     * and an embedding function chosen according to the embedding provider configuration
+     * (uses Ollama when the provider is "ollama", otherwise uses the OpenAI embedding function).
+     *
+     * @return An EmbeddingFunc configured with the resolved `embeddingDim`, `maxTokenSize`, and `func`.
+     */
 fun defaultEmbeddingFunc(): EmbeddingFunc =
     embeddingModelConfig().let { (provider, dim, ctx) ->
         val func =

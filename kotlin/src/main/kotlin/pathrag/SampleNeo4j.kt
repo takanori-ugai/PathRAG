@@ -9,7 +9,14 @@ import java.nio.file.Paths
  * Set Neo4j connection via env (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD),
  * then run: ./gradlew execute -PmainClass=pathrag.SampleNeo4jKt
  */
-fun main() =
+/**
+     * Runs a sample PathRAG demonstration using a Neo4j-backed graph store.
+     *
+     * Loads environment variables from ../.env, constructs a PathRAG instance with sensible defaults
+     * (including Neo4j connection via ExtraConfig and addon parameters), inserts three sample Dickens-related
+     * documents, performs the same query in "local", "global", and "hybrid" modes, and prints each result.
+     */
+    fun main() =
     runBlocking {
         val env = EnvironmentConfig.load(Paths.get("../.env"))
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"

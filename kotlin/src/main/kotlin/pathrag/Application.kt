@@ -61,9 +61,10 @@ import java.util.concurrent.atomic.AtomicBoolean
 private val logger = KotlinLogging.logger("pathrag")
 
 /**
- * Entry point that mirrors the behavior of the Python FastAPI server in [../main.py].
- * It loads environment variables, sets up default data, prepares directories, configures CORS,
- * and exposes placeholder routes for future feature parity.
+ * Starts the PathRAG HTTP server using environment configuration.
+ *
+ * Loads environment variables from ../.env, determines host and port (defaults to 0.0.0.0 and 8001),
+ * logs a startup message, and launches an embedded Netty server configured via module(env).
  */
 fun main() {
     val env = EnvironmentConfig.load(Paths.get("../.env"))
@@ -77,9 +78,14 @@ fun main() {
 }
 
 /**
- * Ktor module that wires routes, repositories, and storage backends.
+ * Configures the Ktor Application with environment-driven services, storage backends, repositories, and HTTP routes.
  *
- * @param env environment configuration loaded from .env and process vars.
+ * Sets up JSON content negotiation and CORS, ensures working and upload directories exist, builds and initializes
+ * the PathRAG storage layer (KV, vector, graph) from environment settings, constructs user/chat/document repositories,
+ * configures the token service, creates default users and preloads the knowledge graph if empty, and registers
+ * application routes (auth, user, chat, document, and knowledge graph) including static UI and Swagger endpoints.
+ *
+ * @param env EnvironmentConfig providing .env and process variable values used to drive configuration and defaults.
  */
 fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
     warnOnMissingRequiredVars(env)
@@ -200,7 +206,11 @@ class UserRepository(
     private var initialized = false
 
     /**
-     * Count stored users.
+     * Return the number of users currently stored.
+     *
+     * Ensures persisted users are loaded before performing the count.
+     *
+     * @return The number of stored users.
      */
     suspend fun count(): Int {
         ensureLoaded()
@@ -208,7 +218,12 @@ class UserRepository(
     }
 
     /**
-     * Add or update a user record.
+     * Stores the given user in the repository, assigning a new numeric id when the user's `id` is null.
+     *
+     * The user record is persisted and the returned instance reflects the stored state (including the assigned `id`).
+     *
+     * @param user The user to store; if `user.id` is null a new id will be generated and assigned.
+     * @return The stored `User` instance, including its assigned `id`.
      */
     suspend fun add(user: User): User {
         ensureLoaded()
@@ -222,7 +237,12 @@ class UserRepository(
     }
 
     /**
-     * Find a user by username.
+     * Retrieve a user by exact username match.
+     *
+     * Loads persisted users if the repository has not been initialized yet.
+     *
+     * @param username The username to match exactly (case-sensitive).
+     * @return The matching `User` if found, `null` otherwise.
      */
     suspend fun find(username: String): User? {
         ensureLoaded()
@@ -230,7 +250,11 @@ class UserRepository(
     }
 
     /**
-     * Update a user's theme preference.
+     * Update the stored theme for the user identified by `username`.
+     *
+     * @param username The username of the user to update.
+     * @param theme The new theme value to set for the user.
+     * @return The updated `User` with the new theme, or `null` if no user with `username` exists.
      */
     suspend fun updateTheme(
         username: String,
@@ -248,7 +272,11 @@ class UserRepository(
     }
 
     /**
-     * List all users.
+     * Retrieve all users currently stored in the repository.
+     *
+     * If the repository has not been initialized, persisted users will be loaded first.
+     *
+     * @return A snapshot list containing all users. Modifying the returned list does not affect repository state.
      */
     suspend fun list(): List<User> {
         ensureLoaded()
@@ -282,6 +310,12 @@ class UserRepository(
         }
     }
 
+    /**
+     * Persists the current in-memory users list to disk when a file path is configured.
+     *
+     * Writes the users as JSON to the configured file, creating parent directories if necessary.
+     * Any I/O errors are logged and do not propagate. 
+     */
     private suspend fun persist() {
         val file = filePath?.toFile() ?: return
         withContext(Dispatchers.IO) {
@@ -358,7 +392,10 @@ private data class DefaultUser(
  */
 object PasswordHasher {
     /**
-     * Hash input using SHA-256 hex encoding.
+     * Compute the SHA-256 digest of the given string and return it as a lowercase hexadecimal string.
+     *
+     * @param input The input string to hash.
+     * @return The lowercase hexadecimal encoding of the SHA-256 digest of `input`.
      */
     fun hash(input: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -397,6 +434,11 @@ private object SecretKeyLoader {
         return UUID.randomUUID().toString().toByteArray(StandardCharsets.UTF_8)
     }
 
+    /**
+     * Determines whether a secret key is available in the environment.
+     *
+     * @return `true` if either `SECRET_KEY_FILE` points to an existing file with non-blank content or `SECRET_KEY` is set and non-blank, `false` otherwise.
+     */
     fun hasSecret(env: EnvironmentConfig): Boolean {
         val fileSecretPresent =
             env["SECRET_KEY_FILE"]?.takeIf { it.isNotBlank() }?.let { pathString ->
@@ -432,10 +474,11 @@ object TokenService {
     private var verifier: JWTVerifier? = null
 
     /**
-     * Configure secret, issuer, and TTL from environment.
+     * Load and apply token configuration (secret, issuer, and TTL) from the provided environment.
      *
-     * @param env environment config containing token settings.
-     */
+     * Rebuilds the underlying cryptographic signing and verification components after applying settings.
+     *
+     * @param env EnvironmentConfig that may provide SECRET_KEY or SECRET_KEY_FILE, ACCESS_TOKEN_EXPIRE_MINUTES, and TOKEN_ISSUER. */
     fun configure(env: EnvironmentConfig) {
         if (secret == null) {
             secret = SecretKeyLoader.load(env)
@@ -465,14 +508,22 @@ object TokenService {
             algorithm!!
         }
 
-    private fun ensureVerifier(): JWTVerifier =
+    /**
+         * Ensures a JWT verifier instance is available, rebuilding cryptographic components if necessary.
+         *
+         * @return The initialized `JWTVerifier` instance.
+         */
+        private fun ensureVerifier(): JWTVerifier =
         verifier ?: run {
             rebuildCrypto()
             verifier!!
         }
 
     /**
-     * Issue a signed JWT for a username.
+     * Create a signed JSON Web Token (JWT) containing the given username as the subject.
+     *
+     * @param username The username to embed as the token subject (`sub` claim).
+     * @return The signed JWT as a compact string.
      */
     fun issueToken(username: String): String {
         val issuedAt = Instant.now()
@@ -489,8 +540,11 @@ object TokenService {
     }
 
     /**
-     * Extract a username from a JWT, returning null on failure.
-     */
+         * Extracts the username (JWT subject) from the provided token.
+         *
+         * @param token The JWT string to verify; may be null.
+         * @return The token's subject (username) if verification succeeds, `null` otherwise.
+         */
     fun usernameFromToken(token: String?): String? =
         try {
             ensureVerifier().verify(token).subject
@@ -611,7 +665,9 @@ class ChatRepository(
     private var initialized = false
 
     /**
-     * Return all threads.
+     * Retrieve all chat threads as a list.
+     *
+     * @return A list containing all stored ChatThread objects; order is unspecified.
      */
     suspend fun allThreads(): List<ChatThread> {
         ensureLoaded()
@@ -619,7 +675,10 @@ class ChatRepository(
     }
 
     /**
-     * Return the most recent threads.
+     * Get the most recently updated chat threads.
+     *
+     * @param limit The maximum number of threads to return.
+     * @return A list of ChatThread objects ordered by `updatedAt` descending, containing at most `limit` entries.
      */
     suspend fun recentThreads(limit: Int = 5): List<ChatThread> {
         ensureLoaded()
@@ -627,7 +686,10 @@ class ChatRepository(
     }
 
     /**
-     * Fetch a thread by uuid.
+     * Retrieve a chat thread by UUID.
+     *
+     * @param id The thread's UUID.
+     * @return The matching ChatThread, or `null` if none exists.
      */
     suspend fun thread(id: String): ChatThread? {
         ensureLoaded()
@@ -635,7 +697,11 @@ class ChatRepository(
     }
 
     /**
-     * Create a new thread for a user.
+     * Create and persist a new chat thread for the given user.
+     *
+     * @param title The thread title.
+     * @param userId The ID of the user who owns the thread.
+     * @return The created ChatThread with assigned `id` and `uuid`.
      */
     suspend fun addThread(
         title: String,
@@ -661,7 +727,11 @@ class ChatRepository(
     }
 
     /**
-     * Update a thread title.
+     * Update the title of an existing chat thread.
+     *
+     * @param id The thread's UUID.
+     * @param title The new title to set on the thread.
+     * @return The updated `ChatThread` if a thread with `id` exists, `null` otherwise.
      */
     suspend fun updateThreadTitle(
         id: String,
@@ -678,7 +748,12 @@ class ChatRepository(
     }
 
     /**
-     * Mark a thread as deleted.
+     * Marks the thread identified by the given UUID as deleted.
+     *
+     * Sets the thread's `isDeleted` flag to `true`, updates its `updatedAt` timestamp to the current time, persists the change, and returns the updated thread.
+     *
+     * @param id The UUID of the thread to mark deleted.
+     * @return The updated ChatThread with `isDeleted == true`, or `null` if no thread with the given id exists.
      */
     suspend fun markDeleted(id: String): ChatThread? {
         ensureLoaded()
@@ -692,7 +767,13 @@ class ChatRepository(
     }
 
     /**
-     * Append a chat message to a thread.
+     * Appends a new chat message to the specified thread.
+     *
+     * @param threadId The thread's UUID identifying which thread to append to.
+     * @param content The text content of the message.
+     * @param sender The role/name of the sender (defaults to `"user"`).
+     * @param userId The numeric user id of the sender.
+     * @return The created `ChatMessage` if the thread exists, `null` if no thread was found for `threadId`.
      */
     suspend fun addChat(
         threadId: String,
@@ -749,6 +830,12 @@ class ChatRepository(
         }
     }
 
+    /**
+     * Persist in-memory chat threads to the configured JSON file on disk.
+     *
+     * If `filePath` is null, the function returns without side effects. The write is performed on the IO dispatcher;
+     * parent directories are created if necessary. Any I/O or serialization failure is caught and logged but not propagated.
+     */
     private suspend fun persist() {
         val file = filePath?.toFile() ?: return
         withContext(Dispatchers.IO) {
@@ -782,7 +869,9 @@ class DocumentRepository(
     private var initialized = false
 
     /**
-     * List all documents.
+     * Returns all stored documents as a list.
+     *
+     * @return A list of DocumentInfo objects representing all documents currently persisted in the repository.
      */
     suspend fun all(): List<DocumentInfo> {
         ensureLoaded()
@@ -790,7 +879,10 @@ class DocumentRepository(
     }
 
     /**
-     * Fetch a document by id.
+     * Retrieve the document with the given id.
+     *
+     * @param id The document's numeric identifier.
+     * @return The matching DocumentInfo, or `null` if no document with the specified id exists.
      */
     suspend fun get(id: Int): DocumentInfo? {
         ensureLoaded()
@@ -798,7 +890,12 @@ class DocumentRepository(
     }
 
     /**
-     * Add a document from text content.
+     * Create and store a text document and register it in the repository.
+     *
+     * The content is written to a file under the repository's upload directory, a DocumentInfo
+     * with status `"processing"` is recorded and persisted, and the created DocumentInfo is returned.
+     *
+     * @return The created DocumentInfo describing the stored document (includes filePath, fileSize, status, etc.).
      */
     suspend fun add(
         name: String,
@@ -828,7 +925,16 @@ class DocumentRepository(
     }
 
     /**
-     * Add a document from uploaded bytes.
+     * Stores an uploaded file as a new DocumentInfo, writes the file bytes to disk, and persists the document metadata.
+     *
+     * Creates a document entry with a new id, the provided filename and content type (defaults to "application/octet-stream"
+     * when null), file path under the upload directory, file size, and initial status "processing".
+     *
+     * @param name The original filename.
+     * @param data The file contents as a byte array.
+     * @param contentType Optional MIME type for the file; defaults to "application/octet-stream" when null.
+     * @param userId The id of the user uploading the file; defaults to 1.
+     * @return The created DocumentInfo representing the stored file and its metadata.
      */
     suspend fun addFile(
         name: String,
@@ -858,7 +964,10 @@ class DocumentRepository(
     }
 
     /**
-     * Get processing status for a document.
+     * Retrieves the processing status of the document with the given id.
+     *
+     * @param id The document's identifier.
+     * @return The document's status string, or `"unknown"` if no document with the id exists.
      */
     suspend fun status(id: Int): String {
         ensureLoaded()
@@ -866,7 +975,12 @@ class DocumentRepository(
     }
 
     /**
-     * Mark a document as processed.
+     * Mark the document with the given id as processed.
+     *
+     * Sets the document's status to `"processed"`, updates its `processedAt` timestamp to the current time,
+     * clears any `errorMessage`, and persists the change.
+     *
+     * @param id The identifier of the document to mark as processed.
      */
     suspend fun markProcessed(id: Int) {
         ensureLoaded()
@@ -878,7 +992,13 @@ class DocumentRepository(
     }
 
     /**
-     * Mark a document as failed with an error message.
+     * Mark the document identified by `id` as failed and record an error message.
+     *
+     * Updates the document's status to `"failed"`, sets its `errorMessage`, updates `processedAt` to the current time,
+     * and persists the change.
+     *
+     * @param id The document's identifier.
+     * @param message The error message to associate with the document.
      */
     suspend fun markFailed(
         id: Int,
@@ -942,6 +1062,11 @@ class DocumentRepository(
         }
     }
 
+    /**
+     * Persists the in-memory document list to disk when a file path is configured.
+     *
+     * If `filePath` is set, writes the current documents as JSON to that file; if writing fails, a warning is emitted.
+     */
     private suspend fun persist() {
         val file = filePath?.toFile() ?: return
         withContext(Dispatchers.IO) {
@@ -955,7 +1080,11 @@ class DocumentRepository(
     }
 
     /**
-     * Delete all document records and uploaded files.
+     * Deletes all uploaded document files and clears stored document records.
+     *
+     * Removes files from the repository's upload directory, clears the in-memory documents list, resets the next document id, and persists the empty state.
+     *
+     * @return The number of files successfully deleted from the upload directory.
      */
     suspend fun dropAll(): Int {
         ensureLoaded()
@@ -1212,6 +1341,20 @@ private fun isSupportedTextContent(contentType: ContentType?): Boolean {
     return false
 }
 
+/**
+ * Registers document-related HTTP routes under `/documents`, including listing, upload (text and file),
+ * querying, retrieval, status checks, reload, and drop operations.
+ *
+ * Routes:
+ * - GET `/` : list documents for the authenticated user
+ * - POST `/upload` : upload a text document and ingest it into the RAG
+ * - POST `/upload-file` : upload one or more text files (multipart) and ingest each into the RAG
+ * - POST `/query` : run a query against the RAG
+ * - GET `/{document_id}` : retrieve a document by id for the authenticated user
+ * - GET `/{document_id}/status` : retrieve processing status for a document
+ * - POST `/reload` : acknowledge a reload request for the RAG
+ * - POST `/drop` : delete all documents and clear RAG storage
+ */
 private fun Route.documentRoutes(
     repository: DocumentRepository,
     rag: PathRAG,
@@ -1423,43 +1566,71 @@ class EnvironmentConfig private constructor(
     private val values: Map<String, String>,
 ) {
     /**
-     * Return a value from system env or loaded map.
-     */
+ * Retrieve a configuration value by key, preferring the process environment.
+ *
+ * @param key The name of the configuration key to look up.
+ * @return The value associated with `key` from the environment if present; otherwise the value from the loaded map, or `null` if not found.
+ */
     operator fun get(key: String): String? = System.getenv(key) ?: values[key]
 
     /**
-     * Allowed CORS origins string.
-     */
+ * Gets the configured CORS origins string, defaulting to "*" when not set.
+ *
+ * @return The value of the `CORS_ORIGINS` environment variable, or `"*"` if it is unset.
+ */
     fun corsOrigins(): String = this["CORS_ORIGINS"] ?: "*"
 
     /**
-     * Token size used when chunking documents.
-     */
+ * Gets the token size used for chunking documents.
+ *
+ * @return The chunk token size from `CHUNK_TOKEN_SIZE`, or `800` if unset or not a valid integer.
+ */
     fun chunkTokenSize(): Int = this["CHUNK_TOKEN_SIZE"]?.toIntOrNull() ?: 800
 
     /**
-     * Overlap token size used when chunking documents.
-     */
+ * The token overlap size used when chunking documents.
+ *
+ * @return The value of `CHUNK_OVERLAP_TOKEN_SIZE` parsed as an integer if present and valid; otherwise `120`.
+ */
     fun chunkOverlapTokenSize(): Int = this["CHUNK_OVERLAP_TOKEN_SIZE"]?.toIntOrNull() ?: 120
 
     /**
-     * MongoDB URI for Mongo-backed storage.
-     */
+ * Get the MongoDB connection URI from the environment, or null if not set.
+ *
+ * @return The MongoDB connection URI, or `null` if absent.
+ */
     fun mongoUri(): String? = this["MONGO_URI"]
 
     /**
-     * MongoDB database name for Mongo-backed storage.
-     */
+ * Returns the MongoDB database name used for Mongo-backed storage.
+ *
+ * @return The configured database name, or `null` if not set.
+ */
     fun mongoDatabase(): String? = this["MONGO_DATABASE"]
 
     companion object {
         /**
-         * Return an empty config that reads only from system env.
-         */
+ * Create an EnvironmentConfig that reads only from the system environment.
+ *
+ * @return An EnvironmentConfig backed by an empty map so all lookups fall back to system environment variables.
+ */
         fun empty() = EnvironmentConfig(emptyMap())
 
         /**
-         * Load environment variables from a dotenv-style file.
+         * Load environment variables from a dotenv-style file into an EnvironmentConfig.
+         *
+         * Parses the file at [path] as newline-separated KEY=VALUE pairs and returns an EnvironmentConfig
+         * populated with the parsed values. If the file does not exist, returns an EnvironmentConfig using
+         * the system environment (empty map) and logs a warning.
+         *
+         * Parsing rules:
+         * - Blank lines and lines starting with `#` are ignored.
+         * - Lines without an `=` delimiter are ignored.
+         * - Keys and values are trimmed; surrounding double quotes on values are removed.
+         *
+         * @param path Path to the dotenv-format file to load.
+         * @return An EnvironmentConfig containing key/value pairs parsed from the file, or an empty-backed
+         * EnvironmentConfig when the file is missing.
          */
         fun load(path: Path): EnvironmentConfig {
             val file = path.toFile()

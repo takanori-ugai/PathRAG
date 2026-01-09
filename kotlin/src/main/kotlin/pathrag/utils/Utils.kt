@@ -41,6 +41,17 @@ data class EmbeddingFunc(
 ) {
     private val semaphore = if (concurrentLimit > 0) Semaphore(concurrentLimit) else null
 
+    /**
+     * Invoke the embedding function on a list of input strings, enforcing the configured embedding dimension
+     * and respecting the optional concurrency limit.
+     *
+     * Executes the wrapped embedding provider for the given inputs and validates that each returned embedding
+     * has length equal to `embeddingDim`.
+     *
+     * @param inputs The list of texts to convert into embeddings.
+     * @return A list of embeddings where each element is a DoubleArray corresponding to the input at the same index.
+     * @throws IllegalStateException if any returned embedding's length does not match `embeddingDim`.
+     */
     suspend operator fun invoke(inputs: List<String>): List<DoubleArray> {
         val exec: suspend () -> List<DoubleArray> = { func(inputs) }
         val lock = semaphore
@@ -62,7 +73,14 @@ data class EmbeddingFunc(
 }
 
 /**
- * Convert a response string containing JSON into a map.
+ * Extracts the first JSON-like substring from a text response and converts it into a map.
+ *
+ * The function locates the first `{...}` substring, parses it as JSON, and returns a map where
+ * nested JSON objects remain as `JsonObject` and primitive values are converted to strings.
+ *
+ * @param response The text that contains (or is expected to contain) a JSON object.
+ * @return A map of JSON keys to values; values are either `JsonObject` for nested objects or `String` for primitives.
+ * @throws IllegalStateException if no JSON object can be found in the response.
  */
 fun convertResponseToJson(response: String): Map<String, Any?> {
     val regex = Regex("\\{.*\\}", RegexOption.DOT_MATCHES_ALL)
@@ -77,7 +95,11 @@ fun convertResponseToJson(response: String): Map<String, Any?> {
 }
 
 /**
- * Compute an MD5 hash for the given content with an optional prefix.
+ * Produce an MD5 hex identifier for the provided content, optionally prepending a prefix.
+ *
+ * @param content The input string to hash.
+ * @param prefix Optional string to prepend to the resulting hex hash (defaults to empty).
+ * @return The 32-character lowercase MD5 hex digest of `content`, with `prefix` prepended.
  */
 fun computeMdHashId(
     content: String,
@@ -91,8 +113,15 @@ fun computeMdHashId(
 }
 
 /**
- * Throttle async function invocation to a maximum concurrency.
- */
+     * Creates a wrapper that limits concurrent invocations of a suspending zero-argument function.
+     *
+     * The returned higher-order function accepts a suspending `() -> Unit` and produces a new suspending
+     * `() -> Unit` that ensures no more than `maxSize` invocations run at the same time.
+     *
+     * @param maxSize Maximum number of concurrent invocations allowed.
+     * @param waitingTimeMillis Intended waiting time between attempts (currently unused).
+     * @return A function that transforms a suspending `() -> Unit` into a concurrency-limited suspending `() -> Unit`.
+     */
 fun limitAsyncFuncCall(
     maxSize: Int,
     waitingTimeMillis: Long = 1,
@@ -105,7 +134,10 @@ fun limitAsyncFuncCall(
     }
 
 /**
- * Compute a deterministic hash for arbitrary arguments.
+ * Generate a deterministic identifier for the provided arguments.
+ *
+ * @param args Values to include in the hash computation.
+ * @return A 32-character lowercase hexadecimal MD5 hash representing the serialized arguments.
  */
 fun computeArgsHash(vararg args: Any?): String = computeMdHashId(args.toList().toString())
 
@@ -167,12 +199,23 @@ class ResponseCache(
     }
 
     /**
-     * Retrieve all cached entries for a mode.
-     */
+ * Retrieve all cached entries for the given cache mode.
+ *
+ * @param mode The cache mode key under which entries are stored.
+ * @return A map from argsHash to cached Entry for the mode, or `null` if the mode has no entries.
+ */
     suspend fun getById(mode: String): Map<String, Entry>? = store[mode]
 
     /**
-     * Insert or update a cached entry.
+     * Inserts or updates a cached entry for the given mode and arguments, optionally computing and storing an embedding, then persists the cache to disk.
+     *
+     * When embedding caching is enabled via `globalConfig["embedding_cache_config"]` and an `EmbeddingFunc` is available at `globalConfig["embedding_func"]`,
+     * an embedding for `prompt` will be computed and stored with the cache entry; otherwise the entry is stored without an embedding.
+     *
+     * @param mode The cache namespace or mode under which the entry will be stored.
+     * @param argsHash Deterministic hash identifying the arguments for this cached entry.
+     * @param content The response content to store.
+     * @param prompt The prompt that produced `content`; may be used to compute an embedding when embedding caching is enabled.
      */
     suspend fun upsert(
         mode: String,
@@ -199,7 +242,17 @@ class ResponseCache(
     }
 
     /**
-     * Try to serve cached content by hash or similarity.
+     * Retrieve a cached response by exact args hash or by semantic similarity.
+     *
+     * Attempts an exact lookup using `argsHash` within the specified `mode`. If not found and embedding-based
+     * caching is enabled in the global configuration, computes an embedding for `prompt`, searches cached entries
+     * for the most similar embedding, and returns that entry's content if its similarity meets the configured threshold.
+     * If configured, an optional LLM-based similarity verification may be performed before returning a semantically matched entry.
+     *
+     * @param argsHash Deterministic hash of the query arguments used for an exact cache lookup.
+     * @param prompt The prompt or input whose embedding is used for similarity-based retrieval.
+     * @param mode Cache namespace to search within.
+     * @return The cached content string if a suitable entry is found, `null` otherwise.
      */
     suspend fun handleCache(
         argsHash: String,

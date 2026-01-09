@@ -10,7 +10,15 @@ import java.nio.file.Paths
  * insert some text, and execute a query. Replace the sample text/query
  * with your own data as needed.
  */
-fun main() =
+/**
+     * Sample program demonstrating how to configure and use a PathRAG instance.
+     *
+     * Loads environment values from ../.env (with sensible defaults for KV, vector, and graph
+     * storage implementations, working directory, and language), constructs a PathRAG with
+     * keyword and addon settings, inserts example documents, and executes the same query
+     * in local, global, and hybrid modes, printing each result to stdout.
+     */
+    fun main() =
     runBlocking {
         val env = EnvironmentConfig.load(Paths.get("../.env"))
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
