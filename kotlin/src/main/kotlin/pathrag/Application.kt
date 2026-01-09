@@ -966,19 +966,21 @@ class DocumentRepository(
      */
     suspend fun dropAll(): Int {
         ensureLoaded()
-        val deletedCount =
-            withContext(Dispatchers.IO) {
-                val files = File(uploadDir).listFiles().orEmpty()
-                val deleted = files.count { runCatching { it.delete() }.getOrDefault(false) }
-                if (deleted < files.size) {
-                    logger.warn { "Deleted $deleted/${files.size} files in $uploadDir" }
+        return mutex.withLock {
+            val deletedCount =
+                withContext(Dispatchers.IO) {
+                    val files = File(uploadDir).listFiles().orEmpty()
+                    val deleted = files.count { runCatching { it.delete() }.getOrDefault(false) }
+                    if (deleted < files.size) {
+                        logger.warn { "Deleted $deleted/${files.size} files in $uploadDir" }
+                    }
+                    deleted
                 }
-                documents.clear()
-                nextId = 1
-                deleted
-            }
-        persist()
-        return deletedCount
+            documents.clear()
+            nextId = 1
+            persist()
+            deletedCount
+        }
     }
 }
 
@@ -1173,6 +1175,11 @@ private data class UploadDocumentRequest(
 )
 
 @Serializable
+private data class DropAllRequest(
+    val confirmation: String,
+)
+
+@Serializable
 private data class QueryRequest(
     val query: String,
     val mode: String? = null,
@@ -1332,8 +1339,19 @@ private fun Route.documentRoutes(
         }
         post("/drop") {
             call.withAuthenticatedUser(userRepository) {
+                val req =
+                    runCatching { call.receive<DropAllRequest>() }
+                        .getOrElse {
+                            call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Missing confirmation"))
+                            return@withAuthenticatedUser
+                        }
+                if (req.confirmation != "DROP_ALL_DATA") {
+                    call.respond(HttpStatusCode.BadRequest, mapOf("error" to "Invalid confirmation token"))
+                    return@withAuthenticatedUser
+                }
                 val deletedFiles = repository.dropAll()
                 runCatching { rag.dropAll() }.onFailure { ex -> logger.warn(ex) { "Failed to drop PathRAG storages" } }
+                logger.warn { "All documents and storages dropped by user=${it.username}" }
                 call.respond(mapOf("message" to "All documents and storages dropped", "deleted_files" to deletedFiles))
             }
         }

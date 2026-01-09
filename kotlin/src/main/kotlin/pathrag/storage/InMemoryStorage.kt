@@ -235,7 +235,7 @@ class NetworkXStorage(
     /**
      * Fetch node properties.
      */
-    override suspend fun getNode(nodeId: String): Map<String, Any?>? = nodes[nodeId]
+    override suspend fun getNode(nodeId: String): Map<String, Any?>? = nodes[nodeId]?.toMap()
 
     /**
      * Fetch edge properties.
@@ -243,7 +243,7 @@ class NetworkXStorage(
     override suspend fun getEdge(
         sourceNodeId: String,
         targetNodeId: String,
-    ): Map<String, Any?>? = edges[sourceNodeId to targetNodeId]
+    ): Map<String, Any?>? = edges[sourceNodeId to targetNodeId]?.toMap()
 
     /**
      * List all edges touching a node.

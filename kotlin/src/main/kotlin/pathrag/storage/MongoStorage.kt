@@ -18,6 +18,10 @@ import pathrag.utils.log
 
 /**
  * MongoDB-backed key-value storage that persists documents per namespace.
+ *
+ * Note: This implementation currently expects values to be `Map<String, Any?>`
+ * and will throw if a different type is provided during `upsert`. It is
+ * tailored for the existing PathRAG use cases rather than arbitrary payloads.
  */
 class MongoKVStorage<T : Any>(
     override val namespace: String,
@@ -26,10 +30,10 @@ class MongoKVStorage<T : Any>(
     AutoCloseable {
     private val mongoUri: String =
         globalConfig["mongo_uri"] as? String
-            ?: error("MONGO_URI is required when using MongoDB storage (namespace=$namespace)")
+            ?: error("mongo_uri is required when using MongoDB storage (namespace=$namespace)")
     private val mongoDatabase: String =
         globalConfig["mongo_database"] as? String
-            ?: error("MONGO_DATABASE is required when using MongoDB storage (namespace=$namespace)")
+            ?: error("mongo_database is required when using MongoDB storage (namespace=$namespace)")
     private val client: MongoClient = MongoClient.create(mongoUri)
     private val database = client.getDatabase(mongoDatabase)
     private val collection = database.getCollection<org.bson.Document>("${namespace}_kv")
@@ -106,11 +110,24 @@ class MongoKVStorage<T : Any>(
             data.map { (id, value) ->
                 val doc =
                     when (value) {
-                        is Map<*, *> -> org.bson.Document(value.filterKeys { it != "_id" } as Map<String, Any?>)
+                        is Map<*, *> -> {
+                            val m =
+                                value.entries
+                                    .filter { (k, _) -> k != "_id" }
+                                    .associate { (k, v) ->
+                                        require(k is String) {
+                                            "MongoKVStorage only supports String keys. Got key type=${k?.let { it::class.qualifiedName }}"
+                                        }
+                                        k to v
+                                    }
+                            org.bson.Document(m)
+                        }
 
-                        else -> throw IllegalArgumentException(
-                            "MongoKVStorage only supports storing Map values. Got: ${value::class.simpleName}",
-                        )
+                        else -> {
+                            throw IllegalArgumentException(
+                                "MongoKVStorage only supports storing Map values. Got: ${value::class.simpleName}",
+                            )
+                        }
                     }.append("_id", id)
                 ReplaceOneModel(Filters.eq("_id", id), doc, opts)
             }
@@ -134,10 +151,10 @@ class MongoVectorStorage(
     AutoCloseable {
     private val mongoUri: String =
         globalConfig["mongo_uri"] as? String
-            ?: error("MONGO_URI is required when using MongoDB storage (namespace=$namespace)")
+            ?: error("mongo_uri is required when using MongoDB storage (namespace=$namespace)")
     private val mongoDatabase: String =
         globalConfig["mongo_database"] as? String
-            ?: error("MONGO_DATABASE is required when using MongoDB storage (namespace=$namespace)")
+            ?: error("mongo_database is required when using MongoDB storage (namespace=$namespace)")
     private val client: MongoClient = MongoClient.create(mongoUri)
     private val database = client.getDatabase(mongoDatabase)
     private val collection = database.getCollection<org.bson.Document>("${namespace}_vector")
@@ -183,11 +200,17 @@ class MongoVectorStorage(
         val validPairs = items.zip(contents).filter { it.second.isNotBlank() }
         if (validPairs.isEmpty()) return
         val embeddings = embeddingFunc(validPairs.map { it.second })
+        if (embeddings.size != validPairs.size) {
+            log().warn {
+                "MongoVectorStorage upsert skipped: embeddings (${embeddings.size}) != items (${validPairs.size}) for namespace=$namespace"
+            }
+            return
+        }
         val opts = ReplaceOptions().upsert(true)
         val writes =
             validPairs.mapIndexedNotNull { idx, pair ->
                 val (entry, content) = pair
-                val vector = embeddings.getOrNull(idx) ?: return@mapIndexedNotNull null
+                val vector = embeddings[idx]
                 val meta = entry.value.filterKeys { metaFields.contains(it) }
                 val doc =
                     org.bson.Document(
@@ -206,7 +229,9 @@ class MongoVectorStorage(
 
     override suspend fun deleteEntity(entityName: String) {
         val entityId = computeMdHashId(entityName, prefix = "ent-")
+        // Delete by both the hashed id (legacy) and the stored entity_name metadata.
         collection.deleteOne(Filters.eq("_id", entityId))
+        collection.deleteMany(Filters.eq("entity_name", entityName))
     }
 
     override suspend fun deleteRelation(entityName: String) {
@@ -218,7 +243,9 @@ class MongoVectorStorage(
         tgtId: String,
     ) {
         val relId = computeMdHashId(srcId + tgtId, prefix = "rel-")
+        // Delete by both the hashed id (legacy) and the src/tgt metadata.
         collection.deleteOne(Filters.eq("_id", relId))
+        collection.deleteMany(Filters.and(Filters.eq("src_id", srcId), Filters.eq("tgt_id", tgtId)))
     }
 
     override suspend fun drop() {
@@ -237,10 +264,10 @@ class MongoGraphStorage(
     AutoCloseable {
     private val mongoUri: String =
         globalConfig["mongo_uri"] as? String
-            ?: error("MONGO_URI is required when using MongoDB storage (namespace=$namespace)")
+            ?: error("mongo_uri is required when using MongoDB storage (namespace=$namespace)")
     private val mongoDatabase: String =
         globalConfig["mongo_database"] as? String
-            ?: error("MONGO_DATABASE is required when using MongoDB storage (namespace=$namespace)")
+            ?: error("mongo_database is required when using MongoDB storage (namespace=$namespace)")
     private val client: MongoClient = MongoClient.create(mongoUri)
     private val database = client.getDatabase(mongoDatabase)
     private val nodeCollection = database.getCollection<org.bson.Document>("${namespace}_nodes")
@@ -365,11 +392,19 @@ class MongoGraphStorage(
     private suspend fun runMetadataEmbedding(labels: List<String>): Pair<DoubleArray, List<String>> {
         val func = embeddingFunc
         return if (func != null) {
+            val nodesById =
+                nodeCollection
+                    .find(Filters.`in`("_id", labels))
+                    .projection(org.bson.Document(mapOf("_id" to 1, "description" to 1, "entity_type" to 1)))
+                    .map { doc -> doc.getString("_id") to doc }
+                    .toList()
+                    .toMap()
             val texts =
                 labels.map { id ->
-                    val n = getNode(id) ?: emptyMap()
-                    val desc = n["description"]?.toString().orEmpty()
-                    "$id ${n["entity_type"] ?: ""} $desc"
+                    val doc = nodesById[id]
+                    val desc = doc?.get("description")?.toString().orEmpty()
+                    val entityType = doc?.get("entity_type")?.toString().orEmpty()
+                    "$id $entityType $desc"
                 }
             val vectors = func(texts)
             val flat = vectors.flatMap { it.asIterable() }.toDoubleArray()

@@ -89,13 +89,13 @@ suspend fun openAiComplete(
     return withContext(Dispatchers.IO) {
         val maxAttempts = (System.getenv("OPENAI_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
         val backoffMs = (System.getenv("OPENAI_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
-        var lastError: IllegalStateException? = null
+        var lastError: RuntimeException? = null
         val result =
             retryWithBackoff(
                 maxAttempts,
                 backoffMs,
                 operation = { chatModel.chat(fullPrompt) },
-                onError = { e: IllegalStateException, attempt: Int ->
+                onError = { e: RuntimeException, attempt: Int ->
                     lastError = e
                     logger.warn(e) { "OpenAI chat attempt ${attempt + 1} failed for model $modelName" }
                 },
@@ -149,13 +149,13 @@ suspend fun ollamaComplete(
     return withContext(Dispatchers.IO) {
         val maxAttempts = (System.getenv("OLLAMA_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
         val backoffMs = (System.getenv("OLLAMA_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
-        var lastError: IllegalStateException? = null
+        var lastError: RuntimeException? = null
         val result =
             retryWithBackoff(
                 maxAttempts,
                 backoffMs,
                 operation = { chatModel.chat(fullPrompt) },
-                onError = { e: IllegalStateException, attempt: Int ->
+                onError = { e: RuntimeException, attempt: Int ->
                     lastError = e
                     logger.warn(e) { "Ollama chat attempt ${attempt + 1} failed for model $modelName" }
                 },
@@ -196,7 +196,7 @@ suspend fun openAiEmbedding(inputs: List<String>): List<DoubleArray> {
     return withContext(Dispatchers.IO) {
         val maxAttempts = (System.getenv("OPENAI_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
         val backoffMs = (System.getenv("OPENAI_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
-        var lastError: IllegalStateException? = null
+        var lastError: RuntimeException? = null
         val result =
             retryWithBackoff(
                 maxAttempts,
@@ -209,7 +209,7 @@ suspend fun openAiEmbedding(inputs: List<String>): List<DoubleArray> {
                         DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
                     }
                 },
-                onError = { e: IllegalStateException, attempt: Int ->
+                onError = { e: RuntimeException, attempt: Int ->
                     lastError = e
                     logger.warn(e) { "OpenAI embedding attempt ${attempt + 1} failed for model $modelName" }
                 },
@@ -243,7 +243,7 @@ suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
     return withContext(Dispatchers.IO) {
         val maxAttempts = (System.getenv("OLLAMA_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
         val backoffMs = (System.getenv("OLLAMA_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
-        var lastError: IllegalStateException? = null
+        var lastError: RuntimeException? = null
         val result =
             retryWithBackoff(
                 maxAttempts,
@@ -256,7 +256,7 @@ suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
                         DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
                     }
                 },
-                onError = { e: IllegalStateException, attempt: Int ->
+                onError = { e: RuntimeException, attempt: Int ->
                     lastError = e
                     logger.warn(e) { "Ollama embedding attempt ${attempt + 1} failed for model $modelName" }
                 },
@@ -332,13 +332,13 @@ private suspend fun <T> retryWithBackoff(
     maxAttempts: Int,
     backoffMs: Long,
     operation: suspend () -> T,
-    onError: (IllegalStateException, Int) -> Unit,
+    onError: (RuntimeException, Int) -> Unit,
 ): T? {
-    var lastError: IllegalStateException? = null
+    var lastError: RuntimeException? = null
     repeat(maxAttempts) { attempt ->
         try {
             return operation()
-        } catch (e: IllegalStateException) {
+        } catch (e: RuntimeException) {
             lastError = e
             onError(e, attempt)
             if (attempt < maxAttempts - 1 && backoffMs > 0) {
