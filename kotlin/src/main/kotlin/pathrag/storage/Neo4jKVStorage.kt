@@ -40,7 +40,7 @@ class Neo4jKVStorage<T : Any>(
     private val nodeLabel = "${namespace.uppercase()}_KV"
 
     /**
-     * Close the underlying driver.
+     * Shuts down the Neo4j driver and releases associated resources.
      */
     override fun close() {
         driver.close()
@@ -49,12 +49,22 @@ class Neo4jKVStorage<T : Any>(
     private suspend fun <R> read(block: (TransactionContext) -> R): R =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeRead { tx -> block(tx) } } }
 
-    private suspend fun <R> write(block: (TransactionContext) -> R): R =
+    /**
+         * Executes the provided block inside a Neo4j write transaction.
+         *
+         * The `block` is invoked with a `TransactionContext` scoped to the transaction and its return value is forwarded.
+         *
+         * @param block Lambda to execute within the write transaction; receives the transaction context.
+         * @return The value produced by `block`.
+         */
+        private suspend fun <R> write(block: (TransactionContext) -> R): R =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
     /**
-     * Return all keys in this namespace.
-     */
+         * List all keys stored in this storage's namespace.
+         *
+         * @return A list of key strings present in the namespace.
+         */
     override suspend fun allKeys(): List<String> =
         read { tx ->
             tx
@@ -63,8 +73,11 @@ class Neo4jKVStorage<T : Any>(
         }
 
     /**
-     * Fetch a record by id.
-     */
+         * Retrieve the stored value for the given id.
+         *
+         * @param id The record identifier.
+         * @return The node's properties as `T` with the `id` property removed, or `null` if no node exists.
+         */
     override suspend fun getById(id: String): T? =
         read { tx ->
             tx
@@ -81,7 +94,15 @@ class Neo4jKVStorage<T : Any>(
         }
 
     /**
-     * Fetch multiple records by id list.
+     * Retrieve multiple records by their IDs while preserving input order.
+     *
+     * For each ID in `ids` returns the corresponding node's properties (the `id` property is excluded).
+     * If `fields` is provided, only those property names are retained for each result. Missing IDs yield `null` entries,
+     * and an empty `ids` list returns an empty result list.
+     *
+     * @param ids The ordered list of record IDs to fetch.
+     * @param fields Optional set of property names to include; if `null`, all properties (except `id`) are returned.
+     * @return A list whose elements correspond positionally to `ids`: the record properties cast to `T`, or `null` if not found.
      */
     override suspend fun getByIds(
         ids: List<String>,
@@ -109,7 +130,10 @@ class Neo4jKVStorage<T : Any>(
     }
 
     /**
-     * Filter out ids that already exist.
+     * Return the subset of provided IDs that are not present in this storage namespace.
+     *
+     * @param data The list of IDs to check for existence.
+     * @return A set containing IDs from `data` that do not exist in storage.
      */
     override suspend fun filterKeys(data: List<String>): Set<String> {
         val existing = allKeys().toSet()
@@ -117,7 +141,13 @@ class Neo4jKVStorage<T : Any>(
     }
 
     /**
-     * Insert or update records.
+     * Creates or updates nodes for the given id->value pairs in the namespace label.
+     *
+     * For each entry, a node with the storage label and the given `id` is created if missing or updated if present.
+     * If a value is a Map, its entries (excluding an `"id"` key) are stored as node properties; otherwise the value is stored
+     * under the `"value"` property. Calling with an empty map does nothing.
+     *
+     * @param data Mapping of record `id` to its value or property map to upsert.
      */
     override suspend fun upsert(data: Map<String, T>) {
         if (data.isEmpty()) return

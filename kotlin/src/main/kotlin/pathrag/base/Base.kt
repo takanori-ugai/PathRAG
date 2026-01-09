@@ -35,7 +35,15 @@ data class AddonParams(
     val language: String? = null,
     val exampleNumber: Int? = null,
 ) {
-    fun asConfig(): Map<String, Any?> =
+    /**
+         * Convert addon parameters to a configuration map suitable for downstream APIs.
+         *
+         * The resulting map contains the keys `entity_types`, `language`, and `example_number`
+         * mapped to the corresponding fields of this instance.
+         *
+         * @return A map with keys `entity_types`, `language`, and `example_number` and their values.
+         */
+        fun asConfig(): Map<String, Any?> =
         mapOf(
             "entity_types" to entityTypes,
             "language" to language,
@@ -54,7 +62,14 @@ data class ExtraConfig(
     val mongoDatabase: String? = null,
     val additional: Map<String, Any?> = emptyMap(),
 ) {
-    fun toMap(): Map<String, Any?> =
+    /**
+         * Builds a configuration map from this ExtraConfig, excluding any null fields and merging additional entries.
+         *
+         * The resulting map uses snake_case keys for Neo4j and Mongo fields and does not include keys whose values are null.
+         *
+         * @return A map of configuration entries containing non-null `neo4j_uri`, `neo4j_user`, `neo4j_password`, `mongo_uri`, and `mongo_database` values, merged with `additional`.
+         */
+        fun toMap(): Map<String, Any?> =
         mapOf(
             "neo4j_uri" to neo4jUri,
             "neo4j_user" to neo4jUser,
@@ -82,7 +97,16 @@ data class GlobalConfig(
     val fixedHighLevelKeywords: List<String>,
     val fixedLowLevelKeywords: List<String>,
 ) {
-    fun toMap(extra: Map<String, Any?> = emptyMap()): Map<String, Any?> =
+    /**
+         * Convert the GlobalConfig into a plain Map representation for consumption by storage/LLM layers.
+         *
+         * The returned map contains the configuration fields keyed as expected by downstream components
+         * (for example: "working_dir", "embedding_func", "llm_model_name", etc.).
+         *
+         * @param extra Additional entries to merge into the resulting map; entries in `extra` override existing keys on collision.
+         * @return A map of configuration keys to their values, built from this GlobalConfig (including `addon_params` via `addonParams.asConfig()`), merged with `extra`.
+         */
+        fun toMap(extra: Map<String, Any?> = emptyMap()): Map<String, Any?> =
         mapOf(
             "working_dir" to workingDir,
             "embedding_func" to embeddingFunc,
@@ -116,8 +140,10 @@ open class StorageNameSpace(
     open suspend fun indexDoneCallback() = Unit
 
     /**
-     * Hook invoked after a query completes.
-     */
+ * Called when a query operation finishes; override to perform cleanup or post-query actions.
+ *
+ * Default implementation performs no action.
+ */
     open suspend fun queryDoneCallback() = Unit
 }
 
@@ -129,30 +155,46 @@ abstract class BaseVectorStorage(
     globalConfig: Map<String, Any?>,
 ) : StorageNameSpace(namespace, globalConfig) {
     /**
-     * Execute a similarity query against stored vectors.
-     */
+     * Perform a similarity search over stored vectors for the given query.
+     *
+     * Results are ordered by decreasing similarity and contain at most `topK` entries.
+     *
+     * @return A list of result records; each record is a map of field names to their values (nullable).
     abstract suspend fun query(
         query: String,
         topK: Int,
     ): List<Map<String, Any?>>
 
     /**
-     * Insert or update vector records in bulk.
-     */
+ * Bulk insert or update vector records in the storage backend.
+ *
+ * @param data Map where each key is a record identifier and each value is a map of fields for that record (for example vector and metadata fields).
+ */
     abstract suspend fun upsert(data: Map<String, Map<String, Any?>>)
 
     /**
-     * Remove all vectors related to an entity.
-     */
+ * Remove all vectors associated with the given entity.
+ *
+ * The default implementation is a no-op; storage backends may override to delete related vectors.
+ *
+ * @param entityName The identifier or name of the entity whose vectors should be removed.
+ */
     open suspend fun deleteEntity(entityName: String) {}
 
     /**
-     * Remove relationship vectors touching an entity.
-     */
+ * Delete all relationship vectors associated with the given entity within this namespace.
+ *
+ * Default implementation does nothing; storage backends should override to perform the actual deletion.
+ *
+ * @param entityName Identifier or name of the entity whose relationship vectors will be removed.
+ */
     open suspend fun deleteRelation(entityName: String) {}
 
     /**
-     * Remove a single relationship vector.
+     * Delete the stored vector representing the relationship from a source node to a target node.
+     *
+     * @param srcId Identifier of the source node.
+     * @param tgtId Identifier of the target node.
      */
     open suspend fun deleteRelationBetween(
         srcId: String,
@@ -160,8 +202,10 @@ abstract class BaseVectorStorage(
     ) {}
 
     /**
-     * Drop the entire namespace.
-     */
+ * Remove all data and metadata associated with this storage namespace.
+ *
+ * Default implementation is a no-op; storage implementations should override to delete persisted data for the namespace.
+ */
     open suspend fun drop() {}
 }
 
@@ -173,31 +217,47 @@ abstract class BaseKVStorage<T>(
     globalConfig: Map<String, Any?>,
 ) : StorageNameSpace(namespace, globalConfig) {
     /**
-     * List all stored keys.
-     */
+ * Retrieve all keys stored in this namespace.
+ *
+ * @return A list containing every stored key. 
+ */
     abstract suspend fun allKeys(): List<String>
 
     /**
-     * Fetch a single record by id.
-     */
+ * Retrieve a stored record by its identifier.
+ *
+ * @return The record matching `id`, or `null` if no record exists.
+ */
     abstract suspend fun getById(id: String): T?
 
     /**
-     * Fetch multiple records by ids with optional field filtering.
-     */
+     * Retrieve multiple records for the given ids, optionally limiting returned fields.
+     *
+     * The returned list preserves the order of `ids`; each element is the record for the corresponding id or `null` if no record exists for that id. When `fields` is provided, implementations should return only the specified fields when supported.
+     *
+     * @param ids The list of record identifiers to fetch.
+     * @param fields Optional set of field names to include in each returned record; if `null`, all available fields may be returned.
+     * @return A list of records or `null` entries corresponding to each id in `ids`.
     abstract suspend fun getByIds(
         ids: List<String>,
         fields: Set<String>? = null,
     ): List<T?>
 
     /**
-     * Filter out keys that already exist.
-     */
+ * Return the subset of input keys that are not present in the storage namespace.
+ *
+ * @param data The keys to check.
+ * @return A set containing keys from `data` that do not already exist in storage.
+ */
     abstract suspend fun filterKeys(data: List<String>): Set<String>
 
     /**
-     * Insert or update records in bulk.
-     */
+ * Bulk insert or update records in the storage namespace.
+ *
+ * Each entry's key is the record id and the value is the record to store; implementations should create missing records and update existing ones.
+ *
+ * @param data Map from record id to record value to upsert.
+ */
     abstract suspend fun upsert(data: Map<String, T>)
 
     /**
@@ -214,12 +274,19 @@ abstract class BaseGraphStorage(
     globalConfig: Map<String, Any?>,
 ) : StorageNameSpace(namespace, globalConfig) {
     /**
-     * Determine if a node exists.
-     */
+ * Check whether a node with the given identifier exists in the graph.
+ *
+ * @param nodeId The identifier of the node to check.
+ * @return `true` if a node with the given id exists, `false` otherwise.
+ */
     open suspend fun hasNode(nodeId: String): Boolean = false
 
     /**
-     * Determine if an edge exists.
+     * Check whether an edge exists from the source node to the target node.
+     *
+     * @param sourceNodeId Identifier of the source node.
+     * @param targetNodeId Identifier of the target node.
+     * @return `true` if an edge from `sourceNodeId` to `targetNodeId` exists, `false` otherwise.
      */
     open suspend fun hasEdge(
         sourceNodeId: String,
@@ -227,12 +294,19 @@ abstract class BaseGraphStorage(
     ): Boolean = false
 
     /**
-     * Degree of a node (incoming + outgoing).
-     */
+ * Compute the degree of a node as the sum of its incoming and outgoing edges.
+ *
+ * @param nodeId Identifier of the node.
+ * @return The number of incoming plus outgoing edges for the node.
+ */
     open suspend fun nodeDegree(nodeId: String): Int = 0
 
     /**
-     * Degree of a specific edge.
+     * Get the degree (number of connections) of the edge between two nodes.
+     *
+     * @param srcId Identifier of the source node.
+     * @param tgtId Identifier of the target node.
+     * @return The degree of the edge between the given source and target node.
      */
     open suspend fun edgeDegree(
         srcId: String,
@@ -240,17 +314,27 @@ abstract class BaseGraphStorage(
     ): Int = 0
 
     /**
-     * PageRank score for a node.
-     */
+ * Retrieve the PageRank score for the given node.
+ *
+ * @param nodeId Identifier of the node.
+ * @return The node's PageRank score; `0.0` if the score is not available.
+ */
     open suspend fun getPagerank(nodeId: String): Double = 0.0
 
     /**
-     * Fetch node properties by id.
-     */
+ * Retrieve the stored properties for a node identified by the given id.
+ *
+ * @param nodeId The unique identifier of the node to fetch.
+ * @return A map of the node's properties, or `null` if the node does not exist.
+ */
     abstract suspend fun getNode(nodeId: String): Map<String, Any?>?
 
     /**
-     * Fetch edge properties by source/target ids.
+     * Retrieves properties for the edge between the given source and target node IDs.
+     *
+     * @param sourceNodeId The identifier of the source node.
+     * @param targetNodeId The identifier of the target node.
+     * @return A map of edge properties, or `null` if no edge exists between the specified nodes.
      */
     abstract suspend fun getEdge(
         sourceNodeId: String,
@@ -258,22 +342,34 @@ abstract class BaseGraphStorage(
     ): Map<String, Any?>?
 
     /**
-     * Fetch all edges for a node.
-     */
+ * Retrieve edges incident to the specified node.
+ *
+ * @param sourceNodeId Identifier of the node whose edges should be fetched.
+ * @return A list of pairs where the first element is the adjacent node's id and the second element is the edge id, or `null` if no edges are present.
+ */
     abstract suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>>?
 
     /**
-     * Fetch incoming edges for a node.
-     */
+ * Retrieve incoming edges for the specified node.
+ *
+ * @param nodeId The target node identifier.
+ * @return A list of pairs `(sourceNodeId, targetNodeId)` whose `targetNodeId` equals `nodeId`, or `null` if the storage does not expose edges.
+ */
     open suspend fun getNodeInEdges(nodeId: String): List<Pair<String, String>>? = edges().filter { it.second == nodeId }
 
     /**
-     * Fetch outgoing edges for a node.
-     */
+ * Return the outgoing edges that originate from the given node.
+ *
+ * @param nodeId The id of the source node whose outgoing edges are requested.
+ * @return A list of `(sourceId, targetId)` pairs for edges originating from `nodeId`, or `null` if no edge list is available.
+ */
     open suspend fun getNodeOutEdges(nodeId: String): List<Pair<String, String>>? = edges().filter { it.first == nodeId }
 
     /**
-     * Insert or update a node.
+     * Inserts or updates a node in the graph storage.
+     *
+     * @param nodeId The unique identifier of the node.
+     * @param nodeData A map of node properties; values may be null.
      */
     abstract suspend fun upsertNode(
         nodeId: String,
@@ -281,7 +377,15 @@ abstract class BaseGraphStorage(
     )
 
     /**
-     * Insert or update an edge.
+     * Create or update an edge between two nodes in the namespace.
+     *
+     * Implementations should persist the provided edge properties for the directed edge
+     * from `sourceNodeId` to `targetNodeId`, replacing or merging existing stored data
+     * according to the backend's semantics.
+     *
+     * @param sourceNodeId Identifier of the source node.
+     * @param targetNodeId Identifier of the target node.
+     * @param edgeData Map of properties to associate with the edge.
      */
     abstract suspend fun upsertEdge(
         sourceNodeId: String,
@@ -290,7 +394,10 @@ abstract class BaseGraphStorage(
     )
 
     /**
-     * Delete an edge by endpoints.
+     * Remove the edge connecting two nodes identified by their IDs.
+     *
+     * @param sourceNodeId The identifier of the source node.
+     * @param targetNodeId The identifier of the target node.
      */
     abstract suspend fun deleteEdge(
         sourceNodeId: String,
@@ -303,24 +410,35 @@ abstract class BaseGraphStorage(
     abstract suspend fun deleteNode(nodeId: String)
 
     /**
-     * Embed nodes with the requested algorithm.
-     */
+         * Compute vector embeddings for nodes using the specified algorithm.
+         *
+         * @param algorithm The name of the embedding algorithm to apply.
+         * @return A pair where the first element is a flat array of embedding values (embeddings for all nodes)
+         *         and the second element is the ordered list of node IDs corresponding to those embeddings.
+         * @throws NotImplementedError If node embedding is not implemented by the storage backend.
+         */
     open suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> =
         throw NotImplementedError("Node embedding is not implemented")
 
     /**
-     * List node ids.
-     */
+ * Retrieve the IDs of all nodes in this namespace.
+ *
+ * @return A list of node IDs; empty list if no nodes are present.
+ */
     open suspend fun nodes(): List<String> = emptyList()
 
     /**
-     * List edges as source/target pairs.
-     */
+ * Return the stored edges as pairs of source and target node IDs.
+ *
+ * @return A list of pairs where each pair is `(sourceNodeId, targetNodeId)`. Returns an empty list by default.
+ */
     open suspend fun edges(): List<Pair<String, String>> = emptyList()
 
     /**
-     * Drop the namespace and clear stored data.
-     */
+ * Remove all data and metadata associated with this storage namespace.
+ *
+ * Default implementation is a no-op; storage implementations should override to delete persisted data for the namespace.
+ */
     open suspend fun drop() {}
 }
 

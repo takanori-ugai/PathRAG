@@ -11,7 +11,10 @@ object Tokenizer {
     private val registry = Encodings.newDefaultEncodingRegistry()
 
     /**
-     * Resolve an encoding for a given model, falling back to cl100k_base.
+     * Selects an encoding for the specified model, falling back to "cl100k_base" when no model-specific encoding exists.
+     *
+     * @param model The model name to resolve an encoding for; defaults to "gpt-4o-mini".
+     * @return The resolved `Encoding` instance for the provided model or the `cl100k_base` encoding if none is registered for the model.
      */
     fun encoding(model: String = "gpt-4o-mini"): Encoding {
         val byModel = registry.getEncodingForModel(model)
@@ -20,8 +23,14 @@ object Tokenizer {
     }
 
     /**
-     * Encode content into token ids for the chosen model.
-     */
+     * Convert the given text into a list of token IDs using the encoding associated with the specified model.
+     *
+     * The function resolves an encoding for `model` and falls back to the "cl100k_base" encoding when a model-specific
+     * encoding is not available.
+     *
+     * @param content The text to encode into tokens.
+     * @param model The model name whose encoding should be used; defaults to "gpt-4o-mini".
+     * @return A list of token IDs representing the encoded `content`.
     fun encode(
         content: String,
         model: String = "gpt-4o-mini",
@@ -35,7 +44,11 @@ object Tokenizer {
     }
 
     /**
-     * Decode token ids back into text for the chosen model.
+     * Decode a sequence of token IDs into text using the encoding for the specified model.
+     *
+     * @param tokens List of token IDs to decode.
+     * @param model Model name used to select the encoding; defaults to "gpt-4o-mini".
+     * @return The decoded text.
      */
     fun decode(
         tokens: List<Int>,
