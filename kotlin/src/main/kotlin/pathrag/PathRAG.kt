@@ -67,7 +67,7 @@ class PathRAG(
             "example_number" to (System.getenv("KEYWORD_EXAMPLE_COUNT")?.toIntOrNull() ?: 3),
         ),
     private val extraConfig: Map<String, Any?> = emptyMap(),
-) {
+) : AutoCloseable {
     private val logger = KotlinLogging.logger("PathRAG")
     private val llmProvider: String = System.getenv("LLM_PROVIDER")?.lowercase() ?: "openai"
     private val llmModelName: String =
@@ -536,5 +536,16 @@ class PathRAG(
             )
         }.onFailure { ex -> logger.error(ex) { "Failed to upsert relationship vector $relId" } }
         logger.info { "Edge '$srcKey' -> '$tgtKey' upserted." }
+    }
+
+    override fun close() {
+        listOf(
+            fullDocs,
+            textChunks,
+            chunkEntityRelationGraph,
+            entitiesVdb,
+            relationshipsVdb,
+            chunksVdb,
+        ).forEach { (it as? AutoCloseable)?.close() }
     }
 }

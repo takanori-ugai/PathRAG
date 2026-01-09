@@ -299,7 +299,7 @@ suspend fun kgQuery(
                 }
 
                 else -> {
-                    "Unknown mode ${queryParam.mode}"
+                    throw IllegalArgumentException("Unknown query mode: ${queryParam.mode}. Supported modes: local, global, hybrid")
                 }
             }
         hashingKv?.upsert(queryParam.mode, argsHash, response, query)

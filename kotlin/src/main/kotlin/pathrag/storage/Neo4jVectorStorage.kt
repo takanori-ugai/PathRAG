@@ -78,13 +78,18 @@ class Neo4jVectorStorage(
         val queryEmbedding = embeddings.first()
         queryWithIndex(queryEmbedding, topK)?.let { return it }
 
+        val maxFallbackVectors = (globalConfig["max_fallback_vectors"] as? Int) ?: 10000
         val vectors =
             read { tx ->
                 tx
                     .run(
-                        "MATCH (v:$nodeLabel) RETURN v.id AS id, v.content AS content, v.embedding AS embedding, v AS props",
+                        "MATCH (v:$nodeLabel) RETURN v.id AS id, v.content AS content, v.embedding AS embedding, v AS props LIMIT \$limit",
+                        Values.parameters("limit", maxFallbackVectors),
                     ).list { rec -> rec.toVectorEntry() }
             }
+        if (vectors.size >= maxFallbackVectors) {
+            logger.warn { "Fallback vector query reached limit $maxFallbackVectors for namespace $namespace; results may be truncated." }
+        }
         return vectors
             .mapNotNull { entry ->
                 val emb = entry["embedding"] as? DoubleArray ?: return@mapNotNull null

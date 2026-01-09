@@ -145,9 +145,22 @@ suspend fun ollamaComplete(
         }
 
     return withContext(Dispatchers.IO) {
-        runCatching { chatModel.chat(fullPrompt) }
-            .onFailure { logger.warn(it) { "Ollama chat call failed for model $modelName" } }
-            .getOrElse { Prompts.FAIL_RESPONSE }
+        val maxAttempts = (System.getenv("OLLAMA_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
+        val backoffMs = (System.getenv("OLLAMA_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
+        var lastError: Exception? = null
+        repeat(maxAttempts) { attempt ->
+            try {
+                return@withContext chatModel.chat(fullPrompt)
+            } catch (e: Exception) {
+                lastError = e
+                logger.warn(e) { "Ollama chat attempt ${attempt + 1} failed for model $modelName" }
+                if (attempt < maxAttempts - 1) {
+                    delay(backoffMs)
+                }
+            }
+        }
+        logger.error(lastError) { "Ollama chat call failed after $maxAttempts attempts for model $modelName" }
+        Prompts.FAIL_RESPONSE
     }
 }
 
@@ -218,17 +231,27 @@ suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
         }
 
     return withContext(Dispatchers.IO) {
-        runCatching {
-            val segments = sanitized.map { TextSegment.from(it) }
-            val response: Response<List<Embedding>> = embedModel.embedAll(segments)
-            response.content().map { embedding ->
-                val vector = embedding.vector()
-                DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
+        val maxAttempts = (System.getenv("OLLAMA_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
+        val backoffMs = (System.getenv("OLLAMA_RETRY_BACKOFF_MS")?.toLongOrNull() ?: 500L).coerceAtLeast(0L)
+        var lastError: Exception? = null
+        repeat(maxAttempts) { attempt ->
+            try {
+                val segments = sanitized.map { TextSegment.from(it) }
+                val response: Response<List<Embedding>> = embedModel.embedAll(segments)
+                return@withContext response.content().map { embedding ->
+                    val vector = embedding.vector()
+                    DoubleArray(vector.size) { idx -> vector[idx].toDouble() }
+                }
+            } catch (e: Exception) {
+                lastError = e
+                logger.warn(e) { "Ollama embedding attempt ${attempt + 1} failed for model $modelName" }
+                if (attempt < maxAttempts - 1) {
+                    delay(backoffMs)
+                }
             }
-        }.onFailure { ex ->
-            logger.warn(ex) { "Ollama embedding call failed for model $modelName" }
-            throw IllegalStateException("Ollama embedding call failed for model $modelName", ex)
-        }.getOrThrow()
+        }
+        logger.error(lastError) { "Ollama embedding call failed after $maxAttempts attempts for model $modelName" }
+        throw IllegalStateException("Ollama embedding call failed after $maxAttempts attempts for model $modelName", lastError)
     }
 }
 

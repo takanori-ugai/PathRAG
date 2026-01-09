@@ -193,6 +193,11 @@ class NanoVectorDBStorage(
         a: DoubleArray,
         b: DoubleArray,
     ): Double {
+        if (a.size != b.size) {
+            logger.warn { "Cannot compute cosine similarity for vectors of different dimensions: ${a.size} vs ${b.size}" }
+            return 0.0
+        }
+        if (a.isEmpty()) return 0.0
         val dot = a.zip(b).sumOf { it.first * it.second }
         val normA = kotlin.math.sqrt(a.sumOf { it * it })
         val normB = kotlin.math.sqrt(b.sumOf { it * it })
@@ -327,7 +332,10 @@ class NetworkXStorage(
      * Retrieve cached or computed PageRank.
      */
     override suspend fun getPagerank(nodeId: String): Double {
-        val ranks = cachedPagerank ?: computePagerank().also { cachedPagerank = it }
+        val ranks =
+            cachedPagerank ?: mutex.withLock {
+                cachedPagerank ?: computePagerank().also { cachedPagerank = it }
+            }
         return ranks[nodeId] ?: 0.0
     }
 

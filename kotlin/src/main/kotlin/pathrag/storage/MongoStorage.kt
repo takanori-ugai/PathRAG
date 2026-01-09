@@ -1,6 +1,7 @@
 package pathrag.storage
 
 import com.mongodb.client.model.Filters
+import com.mongodb.client.model.ReplaceOneModel
 import com.mongodb.client.model.ReplaceOptions
 import com.mongodb.kotlin.client.coroutine.MongoClient
 import kotlinx.coroutines.flow.firstOrNull
@@ -12,6 +13,7 @@ import pathrag.base.BaseVectorStorage
 import pathrag.utils.EmbeddingFunc
 import pathrag.utils.computeMdHashId
 import pathrag.utils.computePagerankLocal
+import pathrag.utils.log
 
 /**
  * MongoDB-backed key-value storage that persists documents per namespace.
@@ -79,8 +81,15 @@ class MongoKVStorage<T : Any>(
     }
 
     override suspend fun filterKeys(data: List<String>): Set<String> {
-        val existing = allKeys().toSet()
-        return data.filterNot { existing.contains(it) }.toSet()
+        if (data.isEmpty()) return emptySet()
+        val existing =
+            collection
+                .find(Filters.`in`("_id", data))
+                .projection(org.bson.Document("_id", 1))
+                .map { it.getString("_id") }
+                .toList()
+                .toSet()
+        return data.toSet() - existing
     }
 
     override suspend fun upsert(data: Map<String, T>) {
@@ -90,7 +99,10 @@ class MongoKVStorage<T : Any>(
             val doc =
                 when (value) {
                     is Map<*, *> -> org.bson.Document(value.filterKeys { it != "_id" } as Map<String, Any?>)
-                    else -> org.bson.Document("value", value)
+
+                    else -> throw IllegalArgumentException(
+                        "MongoKVStorage only supports storing Map values. Got: ${value::class.simpleName}",
+                    )
                 }.append("_id", id)
             collection.replaceOne(Filters.eq("_id", id), doc, opts)
         }
@@ -131,6 +143,7 @@ class MongoVectorStorage(
             try {
                 embeddingFunc(listOf(query))
             } catch (e: Exception) {
+                log().warn(e) { "Embedding generation failed for query in MongoVectorStorage ($namespace)" }
                 return emptyList()
             }
         val queryEmbedding = embeddings.firstOrNull() ?: return emptyList()
@@ -155,19 +168,23 @@ class MongoVectorStorage(
         if (validPairs.isEmpty()) return
         val embeddings = embeddingFunc(validPairs.map { it.second })
         val opts = ReplaceOptions().upsert(true)
-        validPairs.forEachIndexed { idx, pair ->
-            val (entry, content) = pair
-            val vector = embeddings.getOrNull(idx) ?: return@forEachIndexed
-            val meta = entry.value.filterKeys { metaFields.contains(it) }
-            val doc =
-                org.bson.Document(
-                    mapOf(
-                        "_id" to entry.key,
-                        "content" to content,
-                        "embedding" to vector.toList(),
-                    ) + meta,
-                )
-            collection.replaceOne(Filters.eq("_id", entry.key), doc, opts)
+        val writes =
+            validPairs.mapIndexedNotNull { idx, pair ->
+                val (entry, content) = pair
+                val vector = embeddings.getOrNull(idx) ?: return@mapIndexedNotNull null
+                val meta = entry.value.filterKeys { metaFields.contains(it) }
+                val doc =
+                    org.bson.Document(
+                        mapOf(
+                            "_id" to entry.key,
+                            "content" to content,
+                            "embedding" to vector.toList(),
+                        ) + meta,
+                    )
+                ReplaceOneModel(Filters.eq("_id", entry.key), doc, opts)
+            }
+        if (writes.isNotEmpty()) {
+            collection.bulkWrite(writes)
         }
     }
 
