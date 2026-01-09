@@ -14,6 +14,9 @@ import pathrag.operate.chunkingByTokenSize
 import pathrag.operate.extractEntities
 import pathrag.operate.kgQuery
 import pathrag.storage.JsonKVStorage
+import pathrag.storage.MongoGraphStorage
+import pathrag.storage.MongoKVStorage
+import pathrag.storage.MongoVectorStorage
 import pathrag.storage.NanoVectorDBStorage
 import pathrag.storage.Neo4jKVStorage
 import pathrag.storage.Neo4jStorage
@@ -125,6 +128,7 @@ class PathRAG(
         when (kvStorage) {
             "JsonKVStorage" -> JsonKVStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jKVStorage" -> Neo4jKVStorage(namespace, globalConfig())
+            "MongoKVStorage" -> MongoKVStorage(namespace, globalConfig())
             else -> error("Unknown kv storage: $kvStorage")
         }
 
@@ -132,6 +136,7 @@ class PathRAG(
         when (vectorStorage) {
             "NanoVectorDBStorage" -> NanoVectorDBStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jVectorStorage" -> Neo4jVectorStorage(namespace, globalConfig(), embeddingFunc)
+            "MongoVectorStorage" -> MongoVectorStorage(namespace, globalConfig(), embeddingFunc)
             else -> error("Unknown vector storage: $vectorStorage")
         }
 
@@ -139,6 +144,7 @@ class PathRAG(
         when (graphStorage) {
             "NetworkXStorage" -> NetworkXStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jStorage" -> Neo4jStorage(namespace, globalConfig())
+            "MongoGraphStorage" -> MongoGraphStorage(namespace, globalConfig(), embeddingFunc)
             else -> error("Unknown graph storage: $graphStorage")
         }
 

@@ -123,6 +123,11 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
             "neo4j_user" to env["NEO4J_USER"],
             "neo4j_password" to env["NEO4J_PASSWORD"],
         ).filterValues { !it.isNullOrBlank() }
+    val mongoConfig =
+        mapOf(
+            "mongo_uri" to env["MONGO_URI"],
+            "mongo_database" to env["MONGO_DATABASE"],
+        ).filterValues { !it.isNullOrBlank() }
 
     val rag =
         PathRAG(
@@ -132,7 +137,7 @@ fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
             graphStorage = graphStorage,
             chunkTokenSize = chunkTokenSize,
             chunkOverlapTokenSize = chunkOverlapTokenSize,
-            extraConfig = neo4jConfig,
+            extraConfig = neo4jConfig + mongoConfig,
         )
     val userRepository = UserRepository(Paths.get(workingDir, "users.json"))
     val chatRepository = ChatRepository(Paths.get(workingDir, "chats.json"))
@@ -1412,6 +1417,16 @@ class EnvironmentConfig private constructor(
      * Overlap token size used when chunking documents.
      */
     fun chunkOverlapTokenSize(): Int = this["CHUNK_OVERLAP_TOKEN_SIZE"]?.toIntOrNull() ?: 120
+
+    /**
+     * MongoDB URI for Mongo-backed storage.
+     */
+    fun mongoUri(): String? = this["MONGO_URI"]
+
+    /**
+     * MongoDB database name for Mongo-backed storage.
+     */
+    fun mongoDatabase(): String? = this["MONGO_DATABASE"]
 
     companion object {
         /**
