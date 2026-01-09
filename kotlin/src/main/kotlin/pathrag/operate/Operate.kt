@@ -66,6 +66,9 @@ private data class KeywordPayload(
     @SerialName("low_level_keywords") val lowLevel: List<String> = emptyList(),
 )
 
+/**
+ * Split content into overlapping chunks based on token counts.
+ */
 fun chunkingByTokenSize(
     content: String,
     overlapTokenSize: Int = 128,
@@ -223,6 +226,9 @@ private fun extractJsonPayload(response: String): String {
 
 private fun normalizeId(id: String): String = id.trim('"').uppercase()
 
+/**
+ * Run a knowledge-graph backed RAG query using the configured mode.
+ */
 suspend fun kgQuery(
     query: String,
     knowledgeGraphInst: BaseGraphStorage,

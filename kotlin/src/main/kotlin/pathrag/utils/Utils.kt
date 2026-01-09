@@ -20,8 +20,19 @@ import kotlin.math.sqrt
 
 private val internalLogger = KotlinLogging.logger("PathRAG")
 
+/**
+ * Lightweight logger accessor for internal use.
+ */
 fun log() = internalLogger
 
+/**
+ * Wrapper around an embedding function with dimension enforcement and optional concurrency limiting.
+ *
+ * @property embeddingDim expected dimension of embedding vectors.
+ * @property maxTokenSize maximum token size supported by the embedding model.
+ * @property func underlying embedding generator.
+ * @property concurrentLimit maximum concurrent invocations.
+ */
 data class EmbeddingFunc(
     val embeddingDim: Int,
     val maxTokenSize: Int,
@@ -50,6 +61,9 @@ data class EmbeddingFunc(
     }
 }
 
+/**
+ * Convert a response string containing JSON into a map.
+ */
 fun convertResponseToJson(response: String): Map<String, Any?> {
     val regex = Regex("\\{.*\\}", RegexOption.DOT_MATCHES_ALL)
     val jsonString = regex.find(response)?.value ?: error("Unable to parse JSON from response: $response")
@@ -62,6 +76,9 @@ fun convertResponseToJson(response: String): Map<String, Any?> {
     }
 }
 
+/**
+ * Compute an MD5 hash for the given content with an optional prefix.
+ */
 fun computeMdHashId(
     content: String,
     prefix: String = "",
@@ -73,6 +90,9 @@ fun computeMdHashId(
     return prefix + hashText
 }
 
+/**
+ * Throttle async function invocation to a maximum concurrency.
+ */
 fun limitAsyncFuncCall(
     maxSize: Int,
     waitingTimeMillis: Long = 1,
@@ -84,8 +104,20 @@ fun limitAsyncFuncCall(
         }
     }
 
+/**
+ * Compute a deterministic hash for arbitrary arguments.
+ */
 fun computeArgsHash(vararg args: Any?): String = computeMdHashId(args.toList().toString())
 
+/**
+ * Cached payload for persisted responses.
+ *
+ * @property argsHash hash of query args.
+ * @property content cached response content.
+ * @property prompt prompt that produced the content.
+ * @property embedding optional embedding for similarity reuse.
+ * @property mode mode associated with the cache entry.
+ */
 data class CacheData(
     val argsHash: String,
     val content: String,
@@ -104,9 +136,21 @@ private data class PersistEntry(
     val max: Double? = null,
 )
 
+/**
+ * In-memory response cache with optional disk persistence and embedding similarity.
+ *
+ * @property globalConfig shared configuration containing cache and embedding options.
+ */
 class ResponseCache(
     val globalConfig: Map<String, Any?> = emptyMap(),
 ) {
+    /**
+     * In-memory cache entry.
+     *
+     * @property content cached content.
+     * @property prompt originating prompt.
+     * @property embedding optional embedding used for similarity.
+     */
     data class Entry(
         val content: String,
         val prompt: String,
@@ -122,8 +166,14 @@ class ResponseCache(
         loadFromDisk()
     }
 
+    /**
+     * Retrieve all cached entries for a mode.
+     */
     suspend fun getById(mode: String): Map<String, Entry>? = store[mode]
 
+    /**
+     * Insert or update a cached entry.
+     */
     suspend fun upsert(
         mode: String,
         argsHash: String,
@@ -148,6 +198,9 @@ class ResponseCache(
         persist()
     }
 
+    /**
+     * Try to serve cached content by hash or similarity.
+     */
     suspend fun handleCache(
         argsHash: String,
         prompt: String,

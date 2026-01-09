@@ -14,6 +14,9 @@ import pathrag.base.BaseVectorStorage
 import pathrag.utils.EmbeddingFunc
 import pathrag.utils.computeMdHashId
 
+/**
+ * Neo4j-backed vector storage using native vector indexes when available.
+ */
 class Neo4jVectorStorage(
     override val namespace: String,
     override val globalConfig: Map<String, Any?>,
@@ -43,6 +46,9 @@ class Neo4jVectorStorage(
     private val nodeLabel = "${namespace.uppercase()}_VECTOR"
     private val vectorIndexName = "${nodeLabel}_EMBED_IDX"
 
+    /**
+     * Close underlying Neo4j driver resources.
+     */
     override fun close() {
         driver.close()
     }
@@ -53,6 +59,9 @@ class Neo4jVectorStorage(
     private suspend fun <T> write(block: (TransactionContext) -> T): T =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
+    /**
+     * Query stored vectors, preferring the Neo4j vector index when present.
+     */
     override suspend fun query(
         query: String,
         topK: Int,
@@ -87,6 +96,9 @@ class Neo4jVectorStorage(
             .take(topK)
     }
 
+    /**
+     * Insert or update vectors and metadata.
+     */
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
         if (data.isEmpty()) return
         val items = data.entries.toList()
@@ -118,11 +130,17 @@ class Neo4jVectorStorage(
         }
     }
 
+    /**
+     * Delete vectors associated with an entity.
+     */
     override suspend fun deleteEntity(entityName: String) {
         val entityId = computeMdHashId(entityName, prefix = "ent-")
         write { tx -> tx.run("MATCH (v:$nodeLabel {id:\$id}) DETACH DELETE v", Values.parameters("id", entityId)) }
     }
 
+    /**
+     * Delete vectors for relationships touching the entity.
+     */
     override suspend fun deleteRelation(entityName: String) {
         write { tx ->
             tx.run(
@@ -132,6 +150,9 @@ class Neo4jVectorStorage(
         }
     }
 
+    /**
+     * Delete a specific relationship vector.
+     */
     override suspend fun deleteRelationBetween(
         srcId: String,
         tgtId: String,
@@ -145,6 +166,9 @@ class Neo4jVectorStorage(
         }
     }
 
+    /**
+     * Drop all vectors in this namespace.
+     */
     override suspend fun drop() {
         write { tx -> tx.run("MATCH (v:$nodeLabel) DETACH DELETE v") }
     }

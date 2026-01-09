@@ -10,6 +10,9 @@ import org.neo4j.driver.TransactionContext
 import org.neo4j.driver.Values
 import pathrag.base.BaseKVStorage
 
+/**
+ * Neo4j-backed key-value store using a label per namespace.
+ */
 class Neo4jKVStorage<T : Any>(
     override val namespace: String,
     override val globalConfig: Map<String, Any?>,
@@ -36,6 +39,9 @@ class Neo4jKVStorage<T : Any>(
 
     private val nodeLabel = "${namespace.uppercase()}_KV"
 
+    /**
+     * Close the underlying driver.
+     */
     override fun close() {
         driver.close()
     }
@@ -46,6 +52,9 @@ class Neo4jKVStorage<T : Any>(
     private suspend fun <R> write(block: (TransactionContext) -> R): R =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
+    /**
+     * Return all keys in this namespace.
+     */
     override suspend fun allKeys(): List<String> =
         read { tx ->
             tx
@@ -53,6 +62,9 @@ class Neo4jKVStorage<T : Any>(
                 .list { it.get("id").asString() }
         }
 
+    /**
+     * Fetch a record by id.
+     */
     override suspend fun getById(id: String): T? =
         read { tx ->
             tx
@@ -68,6 +80,9 @@ class Neo4jKVStorage<T : Any>(
                 }
         }
 
+    /**
+     * Fetch multiple records by id list.
+     */
     override suspend fun getByIds(
         ids: List<String>,
         fields: Set<String>?,
@@ -93,11 +108,17 @@ class Neo4jKVStorage<T : Any>(
         }
     }
 
+    /**
+     * Filter out ids that already exist.
+     */
     override suspend fun filterKeys(data: List<String>): Set<String> {
         val existing = allKeys().toSet()
         return data.filterNot { existing.contains(it) }.toSet()
     }
 
+    /**
+     * Insert or update records.
+     */
     override suspend fun upsert(data: Map<String, T>) {
         if (data.isEmpty()) return
         write { tx ->
@@ -115,6 +136,9 @@ class Neo4jKVStorage<T : Any>(
         }
     }
 
+    /**
+     * Drop all data in this namespace.
+     */
     override suspend fun drop() {
         write { tx -> tx.run("MATCH (n:$nodeLabel) DETACH DELETE n") }
     }

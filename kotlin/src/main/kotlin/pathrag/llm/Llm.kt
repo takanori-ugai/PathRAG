@@ -30,6 +30,9 @@ private const val DEFAULT_OLLAMA_EMBED_DIM = 768
 private val chatModels = ConcurrentHashMap<String, ChatModel>()
 private val embeddingModels = ConcurrentHashMap<String, EmbeddingModel>()
 
+/**
+ * Call the OpenAI chat model with retry/backoff and optional keyword extraction.
+ */
 suspend fun openAiComplete(
     model: String,
     prompt: String,
@@ -104,6 +107,9 @@ suspend fun openAiComplete(
     return result
 }
 
+/**
+ * Call an Ollama chat model for completions or keyword extraction.
+ */
 suspend fun ollamaComplete(
     model: String,
     prompt: String,
@@ -145,6 +151,9 @@ suspend fun ollamaComplete(
     }
 }
 
+/**
+ * Generate embeddings using the configured OpenAI embedding model.
+ */
 suspend fun openAiEmbedding(inputs: List<String>): List<DoubleArray> {
     val apiKey = System.getenv("OPENAI_API_KEY")
     val sanitized = inputs.filter { it.isNotBlank() }
@@ -191,6 +200,9 @@ suspend fun openAiEmbedding(inputs: List<String>): List<DoubleArray> {
     }
 }
 
+/**
+ * Generate embeddings using an Ollama embedding model.
+ */
 suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
     val sanitized = inputs.filter { it.isNotBlank() }
     if (sanitized.isEmpty()) return emptyList()
@@ -220,6 +232,9 @@ suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
     }
 }
 
+/**
+ * Build the embedding function wrapper based on environment configuration.
+ */
 fun defaultEmbeddingFunc(): EmbeddingFunc =
     embeddingModelConfig().let { (provider, dim, ctx) ->
         val func =

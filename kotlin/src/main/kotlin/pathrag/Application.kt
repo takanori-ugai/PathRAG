@@ -76,6 +76,11 @@ fun main() {
     }.start(wait = true)
 }
 
+/**
+ * Ktor module that wires routes, repositories, and storage backends.
+ *
+ * @param env environment configuration loaded from .env and process vars.
+ */
 fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
     warnOnMissingRequiredVars(env)
     install(ContentNegotiation) {
@@ -192,11 +197,17 @@ class UserRepository(
     @Volatile
     private var initialized = false
 
+    /**
+     * Count stored users.
+     */
     suspend fun count(): Int {
         ensureLoaded()
         return mutex.withLock { users.size }
     }
 
+    /**
+     * Add or update a user record.
+     */
     suspend fun add(user: User): User {
         ensureLoaded()
         return mutex.withLock {
@@ -208,11 +219,17 @@ class UserRepository(
         }
     }
 
+    /**
+     * Find a user by username.
+     */
     suspend fun find(username: String): User? {
         ensureLoaded()
         return mutex.withLock { users.find { it.username == username } }
     }
 
+    /**
+     * Update a user's theme preference.
+     */
     suspend fun updateTheme(
         username: String,
         theme: String,
@@ -228,11 +245,17 @@ class UserRepository(
         }
     }
 
+    /**
+     * List all users.
+     */
     suspend fun list(): List<User> {
         ensureLoaded()
         return mutex.withLock { users.toList() }
     }
 
+    /**
+     * Lazy-load data from disk once.
+     */
     suspend fun ensureLoaded() {
         if (initialized) return
         mutex.withLock {
@@ -270,6 +293,17 @@ class UserRepository(
     }
 }
 
+/**
+ * Basic user record persisted for demo authentication.
+ *
+ * @property id numeric user id (auto-assigned when null).
+ * @property username login identifier.
+ * @property email contact email.
+ * @property hashedPassword SHA-256 hashed password string.
+ * @property createdAt creation timestamp.
+ * @property updatedAt last updated timestamp.
+ * @property theme UI theme preference.
+ */
 @Serializable
 data class User(
     val id: Int? = null,
@@ -321,6 +355,9 @@ private data class DefaultUser(
  * Swap this out for a stronger hashing strategy (e.g., bcrypt) when integrating authentication.
  */
 object PasswordHasher {
+    /**
+     * Hash input using SHA-256 hex encoding.
+     */
     fun hash(input: String): String {
         val digest = MessageDigest.getInstance("SHA-256")
         val bytes = digest.digest(input.toByteArray())
@@ -371,6 +408,9 @@ private object SecretKeyLoader {
     }
 }
 
+/**
+ * JWT token helper for issuing and validating access tokens.
+ */
 object TokenService {
     private const val DEFAULT_TOKEN_TTL_MINUTES = 30L
 
@@ -389,6 +429,11 @@ object TokenService {
     @Volatile
     private var verifier: JWTVerifier? = null
 
+    /**
+     * Configure secret, issuer, and TTL from environment.
+     *
+     * @param env environment config containing token settings.
+     */
     fun configure(env: EnvironmentConfig) {
         if (secret == null) {
             secret = SecretKeyLoader.load(env)
@@ -424,6 +469,9 @@ object TokenService {
             verifier!!
         }
 
+    /**
+     * Issue a signed JWT for a username.
+     */
     fun issueToken(username: String): String {
         val issuedAt = Instant.now()
         val expiresAt = issuedAt.plusSeconds(tokenTtlSeconds)
@@ -438,6 +486,9 @@ object TokenService {
             .sign(algorithm)
     }
 
+    /**
+     * Extract a username from a JWT, returning null on failure.
+     */
     fun usernameFromToken(token: String?): String? =
         try {
             ensureVerifier().verify(token).subject
@@ -466,6 +517,18 @@ private data class ThemeRequest(
     val theme: String,
 )
 
+/**
+ * Chat thread containing messages for a user.
+ *
+ * @property id numeric thread id.
+ * @property uuid external thread identifier.
+ * @property userId owner id.
+ * @property title thread title.
+ * @property createdAt creation timestamp.
+ * @property updatedAt last updated timestamp.
+ * @property isDeleted soft-delete flag.
+ * @property chats messages in the thread.
+ */
 @Serializable
 data class ChatThread(
     val id: Int,
@@ -478,6 +541,16 @@ data class ChatThread(
     val chats: List<ChatMessage> = emptyList(),
 )
 
+/**
+ * Individual chat message within a thread.
+ *
+ * @property id message id.
+ * @property threadId owning thread id.
+ * @property userId author id.
+ * @property role sender role.
+ * @property message message content.
+ * @property createdAt creation timestamp.
+ */
 @Serializable
 data class ChatMessage(
     val id: Int,
@@ -488,6 +561,20 @@ data class ChatMessage(
     val createdAt: String = Instant.now().toString(),
 )
 
+/**
+ * Metadata for an uploaded document.
+ *
+ * @property id document id.
+ * @property userId uploader id.
+ * @property filename original name.
+ * @property contentType mime type.
+ * @property filePath path on disk.
+ * @property fileSize file size in bytes.
+ * @property uploadedAt upload timestamp.
+ * @property status processing status.
+ * @property processedAt processing timestamp.
+ * @property errorMessage processing error message if any.
+ */
 @Serializable
 data class DocumentInfo(
     val id: Int,
@@ -502,6 +589,9 @@ data class DocumentInfo(
     val errorMessage: String? = null,
 )
 
+/**
+ * In-memory chat/thread repository with optional persistence.
+ */
 class ChatRepository(
     private val filePath: Path? = null,
 ) {
@@ -518,21 +608,33 @@ class ChatRepository(
     @Volatile
     private var initialized = false
 
+    /**
+     * Return all threads.
+     */
     suspend fun allThreads(): List<ChatThread> {
         ensureLoaded()
         return mutex.withLock { threads.values.toList() }
     }
 
+    /**
+     * Return the most recent threads.
+     */
     suspend fun recentThreads(limit: Int = 5): List<ChatThread> {
         ensureLoaded()
         return mutex.withLock { threads.values.sortedByDescending { it.updatedAt }.take(limit) }
     }
 
+    /**
+     * Fetch a thread by uuid.
+     */
     suspend fun thread(id: String): ChatThread? {
         ensureLoaded()
         return mutex.withLock { threads[id] }
     }
 
+    /**
+     * Create a new thread for a user.
+     */
     suspend fun addThread(
         title: String,
         userId: Int,
@@ -556,6 +658,9 @@ class ChatRepository(
         }
     }
 
+    /**
+     * Update a thread title.
+     */
     suspend fun updateThreadTitle(
         id: String,
         title: String,
@@ -570,6 +675,9 @@ class ChatRepository(
         }
     }
 
+    /**
+     * Mark a thread as deleted.
+     */
     suspend fun markDeleted(id: String): ChatThread? {
         ensureLoaded()
         return mutex.withLock {
@@ -581,6 +689,9 @@ class ChatRepository(
         }
     }
 
+    /**
+     * Append a chat message to a thread.
+     */
     suspend fun addChat(
         threadId: String,
         content: String,
@@ -649,6 +760,9 @@ class ChatRepository(
     }
 }
 
+/**
+ * In-memory document repository that persists uploads to disk.
+ */
 class DocumentRepository(
     private val uploadDir: String,
     private val filePath: Path? = null,
@@ -665,16 +779,25 @@ class DocumentRepository(
     @Volatile
     private var initialized = false
 
+    /**
+     * List all documents.
+     */
     suspend fun all(): List<DocumentInfo> {
         ensureLoaded()
         return mutex.withLock { documents.values.toList() }
     }
 
+    /**
+     * Fetch a document by id.
+     */
     suspend fun get(id: Int): DocumentInfo? {
         ensureLoaded()
         return mutex.withLock { documents[id] }
     }
 
+    /**
+     * Add a document from text content.
+     */
     suspend fun add(
         name: String,
         content: String,
@@ -702,6 +825,9 @@ class DocumentRepository(
         }
     }
 
+    /**
+     * Add a document from uploaded bytes.
+     */
     suspend fun addFile(
         name: String,
         data: ByteArray,
@@ -729,11 +855,17 @@ class DocumentRepository(
         }
     }
 
+    /**
+     * Get processing status for a document.
+     */
     suspend fun status(id: Int): String {
         ensureLoaded()
         return mutex.withLock { documents[id]?.status ?: "unknown" }
     }
 
+    /**
+     * Mark a document as processed.
+     */
     suspend fun markProcessed(id: Int) {
         ensureLoaded()
         mutex.withLock {
@@ -743,6 +875,9 @@ class DocumentRepository(
         }
     }
 
+    /**
+     * Mark a document as failed with an error message.
+     */
     suspend fun markFailed(
         id: Int,
         message: String,
@@ -1252,21 +1387,41 @@ private suspend fun preloadKnowledgeGraphIfEmpty(
 
 /**
  * Minimal .env loader that emulates python-dotenv behavior for local development.
+ *
+ * @property values key/value pairs loaded from disk.
  */
 class EnvironmentConfig private constructor(
     private val values: Map<String, String>,
 ) {
+    /**
+     * Return a value from system env or loaded map.
+     */
     operator fun get(key: String): String? = System.getenv(key) ?: values[key]
 
+    /**
+     * Allowed CORS origins string.
+     */
     fun corsOrigins(): String = this["CORS_ORIGINS"] ?: "*"
 
+    /**
+     * Token size used when chunking documents.
+     */
     fun chunkTokenSize(): Int = this["CHUNK_TOKEN_SIZE"]?.toIntOrNull() ?: 800
 
+    /**
+     * Overlap token size used when chunking documents.
+     */
     fun chunkOverlapTokenSize(): Int = this["CHUNK_OVERLAP_TOKEN_SIZE"]?.toIntOrNull() ?: 120
 
     companion object {
+        /**
+         * Return an empty config that reads only from system env.
+         */
         fun empty() = EnvironmentConfig(emptyMap())
 
+        /**
+         * Load environment variables from a dotenv-style file.
+         */
         fun load(path: Path): EnvironmentConfig {
             val file = path.toFile()
             if (!file.exists()) {

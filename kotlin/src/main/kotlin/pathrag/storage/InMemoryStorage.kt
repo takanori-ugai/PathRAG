@@ -12,6 +12,9 @@ import pathrag.utils.computePagerankLocal
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.abs
 
+/**
+ * Simple in-memory key-value storage used as the default KV backend.
+ */
 class JsonKVStorage<T : Any>(
     override val namespace: String,
     override val globalConfig: Map<String, Any?>,
@@ -20,31 +23,52 @@ class JsonKVStorage<T : Any>(
     private val mutex = Mutex()
     private val data = ConcurrentHashMap<String, T>()
 
+    /**
+     * Return all stored keys.
+     */
     override suspend fun allKeys(): List<String> = data.keys().toList()
 
+    /**
+     * Fetch a value by id.
+     */
     override suspend fun getById(id: String): T? = data[id]
 
+    /**
+     * Fetch multiple values by ids.
+     */
     override suspend fun getByIds(
         ids: List<String>,
         fields: Set<String>?,
     ): List<T?> = ids.map { data[it] }
 
+    /**
+     * Identify which ids are not already stored.
+     */
     override suspend fun filterKeys(data: List<String>): Set<String> {
         val existing = allKeys().toSet()
         return data.filterNot { existing.contains(it) }.toSet()
     }
 
+    /**
+     * Insert or update values.
+     */
     override suspend fun upsert(data: Map<String, T>) {
         mutex.withLock {
             this.data.putAll(data)
         }
     }
 
+    /**
+     * Remove all stored values.
+     */
     override suspend fun drop() {
         mutex.withLock { data.clear() }
     }
 }
 
+/**
+ * Lightweight in-memory vector store with cosine similarity search.
+ */
 class NanoVectorDBStorage(
     override val namespace: String,
     override val globalConfig: Map<String, Any?>,
@@ -55,12 +79,22 @@ class NanoVectorDBStorage(
     private val mutex = Mutex()
     private val entries = ConcurrentHashMap<String, StoredVector>()
 
+    /**
+     * Stored vector entry with optional metadata.
+     *
+     * @property embedding vector values.
+     * @property content raw content tied to the vector.
+     * @property meta metadata persisted alongside the vector.
+     */
     data class StoredVector(
         val embedding: DoubleArray,
         val content: String,
         val meta: Map<String, Any?> = emptyMap(),
     )
 
+    /**
+     * Query vectors by similarity using embeddings generated for the query text.
+     */
     override suspend fun query(
         query: String,
         topK: Int,
@@ -84,6 +118,9 @@ class NanoVectorDBStorage(
             .take(topK)
     }
 
+    /**
+     * Insert or update vectors with metadata.
+     */
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
         val items = data.entries.toList()
         val contents = items.map { it.value["content"]?.toString().orEmpty() }
@@ -107,6 +144,9 @@ class NanoVectorDBStorage(
         }
     }
 
+    /**
+     * Delete all vectors related to an entity.
+     */
     override suspend fun deleteEntity(entityName: String) {
         val entityId = computeMdHashId(entityName, prefix = "ent-")
         mutex.withLock {
@@ -114,6 +154,9 @@ class NanoVectorDBStorage(
         }
     }
 
+    /**
+     * Delete relation vectors that reference the entity.
+     */
     override suspend fun deleteRelation(entityName: String) {
         // Remove any relation vectors involving this entity (matches src_id or tgt_id in metadata)
         mutex.withLock {
@@ -126,6 +169,9 @@ class NanoVectorDBStorage(
         }
     }
 
+    /**
+     * Delete a specific relationship vector.
+     */
     override suspend fun deleteRelationBetween(
         srcId: String,
         tgtId: String,
@@ -136,6 +182,9 @@ class NanoVectorDBStorage(
         }
     }
 
+    /**
+     * Drop the entire vector namespace.
+     */
     override suspend fun drop() {
         mutex.withLock { entries.clear() }
     }
@@ -151,6 +200,9 @@ class NanoVectorDBStorage(
     }
 }
 
+/**
+ * In-memory graph storage that mirrors NetworkX behavior for small graphs.
+ */
 class NetworkXStorage(
     override val namespace: String,
     override val globalConfig: Map<String, Any?>,
@@ -161,30 +213,54 @@ class NetworkXStorage(
     private val edges = ConcurrentHashMap<Pair<String, String>, MutableMap<String, Any?>>()
     private var cachedPagerank: Map<String, Double>? = null
 
+    /**
+     * Check whether a node exists.
+     */
     override suspend fun hasNode(nodeId: String): Boolean = nodes.containsKey(nodeId)
 
+    /**
+     * Check whether an edge exists.
+     */
     override suspend fun hasEdge(
         sourceNodeId: String,
         targetNodeId: String,
     ): Boolean = edges.containsKey(sourceNodeId to targetNodeId)
 
+    /**
+     * Compute degree for a node.
+     */
     override suspend fun nodeDegree(nodeId: String): Int = edges.keys.count { it.first == nodeId || it.second == nodeId }
 
+    /**
+     * Compute degree for a specific edge.
+     */
     override suspend fun edgeDegree(
         srcId: String,
         tgtId: String,
     ): Int = if (edges.containsKey(srcId to tgtId)) 1 else 0
 
+    /**
+     * Fetch node properties.
+     */
     override suspend fun getNode(nodeId: String): Map<String, Any?>? = nodes[nodeId]
 
+    /**
+     * Fetch edge properties.
+     */
     override suspend fun getEdge(
         sourceNodeId: String,
         targetNodeId: String,
     ): Map<String, Any?>? = edges[sourceNodeId to targetNodeId]
 
+    /**
+     * List all edges touching a node.
+     */
     override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
         edges.keys.filter { it.first == sourceNodeId || it.second == sourceNodeId }
 
+    /**
+     * Insert or update a node.
+     */
     override suspend fun upsertNode(
         nodeId: String,
         nodeData: Map<String, Any?>,
@@ -197,6 +273,9 @@ class NetworkXStorage(
         }
     }
 
+    /**
+     * Insert or update an edge.
+     */
     override suspend fun upsertEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -210,6 +289,9 @@ class NetworkXStorage(
         }
     }
 
+    /**
+     * Delete a node and attached edges.
+     */
     override suspend fun deleteNode(nodeId: String) {
         mutex.withLock {
             nodes.remove(nodeId)
@@ -218,6 +300,9 @@ class NetworkXStorage(
         }
     }
 
+    /**
+     * Delete an edge.
+     */
     override suspend fun deleteEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -228,15 +313,27 @@ class NetworkXStorage(
         }
     }
 
+    /**
+     * List node identifiers.
+     */
     override suspend fun nodes(): List<String> = nodes.keys().toList()
 
+    /**
+     * List edges as pairs.
+     */
     override suspend fun edges(): List<Pair<String, String>> = edges.keys.toList()
 
+    /**
+     * Retrieve cached or computed PageRank.
+     */
     override suspend fun getPagerank(nodeId: String): Double {
         val ranks = cachedPagerank ?: computePagerank().also { cachedPagerank = it }
         return ranks[nodeId] ?: 0.0
     }
 
+    /**
+     * Embed nodes using metadata or node2vec.
+     */
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         val labels = nodes.keys().toList()
         if (labels.isEmpty()) return DoubleArray(0) to emptyList()

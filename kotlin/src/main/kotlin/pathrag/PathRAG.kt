@@ -24,6 +24,9 @@ import pathrag.utils.computeMdHashId
 import java.time.LocalDateTime
 import java.time.format.DateTimeFormatter
 
+/**
+ * Core Kotlin implementation of PathRAG that handles ingestion and query flows.
+ */
 class PathRAG(
     private val workingDir: String = "./PathRAG_cache_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd-HH-mm-ss")),
     private val kvStorage: String = "JsonKVStorage",
@@ -163,10 +166,19 @@ class PathRAG(
             "fixed_low_level_keywords" to lowLevelKeywords,
         ).plus(extraConfig)
 
+    /**
+     * Insert documents synchronously by delegating to [ainsert].
+     */
     fun insert(stringOrStrings: Any) = runBlockingMaybe { ainsert(stringOrStrings) }
 
+    /**
+     * Expose the underlying graph storage for inspection.
+     */
     fun graph(): BaseGraphStorage = chunkEntityRelationGraph
 
+    /**
+     * Asynchronously insert documents, chunk them, extract entities, and populate storage.
+     */
     suspend fun ainsert(stringOrStrings: Any) {
         val inputs =
             when (stringOrStrings) {
@@ -216,8 +228,14 @@ class PathRAG(
         }
     }
 
+    /**
+     * Insert a pre-built knowledge graph payload synchronously via [ainsertCustomKg].
+     */
     fun insertCustomKg(customKg: Map<String, Any?>) = runBlockingMaybe { ainsertCustomKg(customKg) }
 
+    /**
+     * Asynchronously upsert user-provided entities/relationships and chunk metadata.
+     */
     suspend fun ainsertCustomKg(customKg: Map<String, Any?>) {
         val chunks = (customKg["chunks"] as? List<Map<String, Any?>>).orEmpty()
         val entities =
@@ -294,6 +312,9 @@ class PathRAG(
         return CustomKgRelationship(src, tgt, desc, keywords, weight, sourceId)
     }
 
+    /**
+     * Execute a query synchronously using the configured RAG mode.
+     */
     fun query(
         query: String,
         param: QueryParam = QueryParam(),
@@ -302,6 +323,9 @@ class PathRAG(
             aquery(query, param)
         }
 
+    /**
+     * Execute a query asynchronously using the configured RAG mode.
+     */
     suspend fun aquery(
         query: String,
         param: QueryParam = QueryParam(),
@@ -321,8 +345,14 @@ class PathRAG(
         return response
     }
 
+    /**
+     * Delete an entity and its relationships synchronously.
+     */
     fun deleteByEntity(entityName: String) = runBlockingMaybe { adeleteByEntity(entityName) }
 
+    /**
+     * Delete an entity and its relationships asynchronously.
+     */
     suspend fun adeleteByEntity(entityName: String) {
         val key = entityName.trim('"').uppercase()
         entitiesVdb.deleteEntity(key)
@@ -331,11 +361,17 @@ class PathRAG(
         logger.info { "Entity '$key' and relationships deleted." }
     }
 
+    /**
+     * Delete an edge synchronously.
+     */
     fun deleteEdge(
         srcId: String,
         tgtId: String,
     ) = runBlockingMaybe { adeleteEdge(srcId, tgtId) }
 
+    /**
+     * Delete an edge asynchronously.
+     */
     suspend fun adeleteEdge(
         srcId: String,
         tgtId: String,
@@ -347,8 +383,14 @@ class PathRAG(
         logger.info { "Edge '$srcKey' -> '$tgtKey' deleted." }
     }
 
+    /**
+     * Clean up dangling edges and isolated nodes synchronously.
+     */
     fun cleanupGraph(): Map<String, Int> = runBlockingMaybe { acleanupGraph() }
 
+    /**
+     * Clean up dangling edges and isolated nodes asynchronously.
+     */
     suspend fun acleanupGraph(): Map<String, Int> {
         var removedEdges = 0
         var removedNodes = 0
@@ -377,8 +419,14 @@ class PathRAG(
         return mapOf("removed_edges" to removedEdges, "removed_nodes" to removedNodes)
     }
 
+    /**
+     * Drop the graph and associated vector stores synchronously.
+     */
     fun dropGraph() = runBlockingMaybe { adropGraph() }
 
+    /**
+     * Drop the graph and associated vector stores asynchronously.
+     */
     suspend fun adropGraph() {
         chunkEntityRelationGraph.drop()
         entitiesVdb.drop()
@@ -386,6 +434,9 @@ class PathRAG(
         logger.info { "Graph and associated entity/relationship vectors dropped." }
     }
 
+    /**
+     * Upsert a single entity synchronously.
+     */
     fun upsertEntity(
         entityName: String,
         description: String = "",
@@ -393,6 +444,9 @@ class PathRAG(
         sourceId: String? = null,
     ) = runBlockingMaybe { aupsertEntity(entityName, description, entityType, sourceId) }
 
+    /**
+     * Upsert a single entity asynchronously.
+     */
     suspend fun aupsertEntity(
         entityName: String,
         description: String = "",
@@ -425,6 +479,9 @@ class PathRAG(
         logger.info { "Entity '$key' upserted." }
     }
 
+    /**
+     * Upsert an edge synchronously.
+     */
     fun upsertEdge(
         srcId: String,
         tgtId: String,
@@ -434,6 +491,9 @@ class PathRAG(
         sourceId: String? = null,
     ) = runBlockingMaybe { aupsertEdge(srcId, tgtId, description, keywords, weight, sourceId) }
 
+    /**
+     * Upsert an edge asynchronously.
+     */
     suspend fun aupsertEdge(
         srcId: String,
         tgtId: String,

@@ -14,6 +14,9 @@ import pathrag.utils.computePagerankLocal
 import java.io.Closeable
 import kotlin.math.abs
 
+/**
+ * Neo4j-backed graph storage that optionally uses GDS for analytics.
+ */
 class Neo4jStorage(
     override val namespace: String,
     override val globalConfig: Map<String, Any?>,
@@ -41,6 +44,9 @@ class Neo4jStorage(
     private val nodeLabel = namespace
     private val relType = "${namespace.uppercase()}_REL"
 
+    /**
+     * Close the underlying driver.
+     */
     override fun close() {
         driver.close()
     }
@@ -51,6 +57,9 @@ class Neo4jStorage(
     private suspend fun <T> write(block: (TransactionContext) -> T): T =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
+    /**
+     * Check whether a node exists.
+     */
     override suspend fun hasNode(nodeId: String): Boolean =
         read { tx ->
             tx
@@ -60,6 +69,9 @@ class Neo4jStorage(
                 ).hasNext()
         }
 
+    /**
+     * Check whether an edge exists.
+     */
     override suspend fun hasEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -72,6 +84,9 @@ class Neo4jStorage(
                 ).hasNext()
         }
 
+    /**
+     * Return degree for a node.
+     */
     override suspend fun nodeDegree(nodeId: String): Int =
         read { tx ->
             tx
@@ -84,11 +99,17 @@ class Neo4jStorage(
                 ?.asInt() ?: 0
         }
 
+    /**
+     * Return degree for a specific edge.
+     */
     override suspend fun edgeDegree(
         srcId: String,
         tgtId: String,
     ): Int = if (hasEdge(srcId, tgtId)) 1 else 0
 
+    /**
+     * Fetch node properties.
+     */
     override suspend fun getNode(nodeId: String): Map<String, Any?>? =
         read { tx ->
             tx
@@ -101,6 +122,9 @@ class Neo4jStorage(
                 ?.asMap { v -> v.asObject() }
         }
 
+    /**
+     * Fetch edge properties.
+     */
     override suspend fun getEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -116,6 +140,9 @@ class Neo4jStorage(
                 ?.asMap { v -> v.asObject() }
         }
 
+    /**
+     * Fetch edges touching a node.
+     */
     override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -127,6 +154,9 @@ class Neo4jStorage(
                 ).list { rec -> rec.get("src").asString() to rec.get("tgt").asString() }
         }
 
+    /**
+     * Fetch incoming edges for a node.
+     */
     override suspend fun getNodeInEdges(nodeId: String): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -136,6 +166,9 @@ class Neo4jStorage(
                 ).list { rec -> rec.get("src").asString() to rec.get("tgt").asString() }
         }
 
+    /**
+     * Fetch outgoing edges for a node.
+     */
     override suspend fun getNodeOutEdges(nodeId: String): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -145,6 +178,9 @@ class Neo4jStorage(
                 ).list { rec -> rec.get("src").asString() to rec.get("tgt").asString() }
         }
 
+    /**
+     * Insert or update a node.
+     */
     override suspend fun upsertNode(
         nodeId: String,
         nodeData: Map<String, Any?>,
@@ -157,6 +193,9 @@ class Neo4jStorage(
         }
     }
 
+    /**
+     * Insert or update an edge and ensure endpoints exist.
+     */
     override suspend fun upsertEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -173,6 +212,9 @@ class Neo4jStorage(
         }
     }
 
+    /**
+     * Delete a node and detach edges.
+     */
     override suspend fun deleteNode(nodeId: String) {
         write { tx ->
             tx.run(
@@ -182,6 +224,9 @@ class Neo4jStorage(
         }
     }
 
+    /**
+     * Delete an edge by endpoints.
+     */
     override suspend fun deleteEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -194,9 +239,15 @@ class Neo4jStorage(
         }
     }
 
+    /**
+     * List node ids.
+     */
     override suspend fun nodes(): List<String> =
         read { tx -> tx.run("MATCH (n:$nodeLabel) RETURN n.id AS id").list { it.get("id").asString() } }
 
+    /**
+     * List edges as pairs.
+     */
     override suspend fun edges(): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -204,15 +255,24 @@ class Neo4jStorage(
                 .list { rec -> rec.get("src").asString() to rec.get("tgt").asString() }
         }
 
+    /**
+     * Get PageRank for a node, computing if necessary.
+     */
     override suspend fun getPagerank(nodeId: String): Double {
         val ranks = computePagerank()
         return ranks[nodeId] ?: 0.0
     }
 
+    /**
+     * Drop the entire graph.
+     */
     override suspend fun drop() {
         write { tx -> tx.run("MATCH (n:$nodeLabel) DETACH DELETE n") }
     }
 
+    /**
+     * Embed nodes using node2vec (if available) or pagerank/degree fallback.
+     */
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         return if (algorithm.lowercase() == "node2vec") {
             runNode2VecGds(globalConfig["node2vec_dim"] as? Int ?: 64)
