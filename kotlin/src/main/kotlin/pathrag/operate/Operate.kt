@@ -246,25 +246,25 @@ private fun extractJsonPayload(response: String): String {
 private fun normalizeId(id: String): String = id.trim('"').uppercase()
 
 /**
-     * Run a retrieval-augmented generation (RAG) query backed by the knowledge graph using the configured mode.
-     *
-     * Dispatches the query to one of the mode-specific runners ("local", "global", "hybrid"), extracts keywords,
-     * composes the system context, and caches the result when a ResponseCache is provided.
-     *
-     * @param query The user's query text.
-     * @param knowledgeGraphInst Graph storage instance used for node/edge lookups and path computations.
-     * @param entitiesVdb Vector database storing entity embeddings and metadata.
-     * @param relationshipsVdb Vector database storing relationship embeddings and metadata.
-     * @param textChunksDb Key-value storage containing text chunks referenced by source IDs.
-     * @param queryParam Parameters controlling retrieval and response behavior (mode, topK, streaming, etc.).
-     * @param globalConfig Global configuration map used for keyword extraction and other runtime options.
-     * @param llmModel LLM call function used to generate keywords and final responses. It receives prompt, optional system prompt,
-     *                 conversation history, keywordExtraction flag, streaming flag, optional maxTokens, and an optional hashingKv.
-     * @param hashingKv Optional response cache used to read/write cached responses keyed by the query and mode.
-     *
-     * @return The generated response string for the query.
-     * @throws IllegalArgumentException If `queryParam.mode` is not one of "local", "global", or "hybrid".
-     */
+ * Run a retrieval-augmented generation (RAG) query backed by the knowledge graph using the configured mode.
+ *
+ * Dispatches the query to one of the mode-specific runners ("local", "global", "hybrid"), extracts keywords,
+ * composes the system context, and caches the result when a ResponseCache is provided.
+ *
+ * @param query The user's query text.
+ * @param knowledgeGraphInst Graph storage instance used for node/edge lookups and path computations.
+ * @param entitiesVdb Vector database storing entity embeddings and metadata.
+ * @param relationshipsVdb Vector database storing relationship embeddings and metadata.
+ * @param textChunksDb Key-value storage containing text chunks referenced by source IDs.
+ * @param queryParam Parameters controlling retrieval and response behavior (mode, topK, streaming, etc.).
+ * @param globalConfig Global configuration map used for keyword extraction and other runtime options.
+ * @param llmModel LLM call function used to generate keywords and final responses. It receives prompt, optional system prompt,
+ *                 conversation history, keywordExtraction flag, streaming flag, optional maxTokens, and an optional hashingKv.
+ * @param hashingKv Optional response cache used to read/write cached responses keyed by the query and mode.
+ *
+ * @return The generated response string for the query.
+ * @throws IllegalArgumentException If `queryParam.mode` is not one of "local", "global", or "hybrid".
+ */
 suspend fun kgQuery(
     query: String,
     knowledgeGraphInst: BaseGraphStorage,

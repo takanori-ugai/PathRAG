@@ -521,11 +521,11 @@ object TokenService {
         }
 
     /**
-         * Ensure a `JWTVerifier` instance is available, creating and returning one if none exists.
-         *
-         * @return The initialized `JWTVerifier` instance.
-         */
-        private fun ensureVerifier(): JWTVerifier =
+     * Ensure a `JWTVerifier` instance is available, creating and returning one if none exists.
+     *
+     * @return The initialized `JWTVerifier` instance.
+     */
+    private fun ensureVerifier(): JWTVerifier =
         verifier ?: run {
             rebuildCrypto()
             verifier!!
@@ -554,11 +554,11 @@ object TokenService {
     }
 
     /**
-         * Extracts the username contained in the JWT subject.
-         *
-         * @param token The JWT as a string, or `null`.
-         * @return The username from the token's `subject`, or `null` if the token is missing, invalid, or expired.
-         */
+     * Extracts the username contained in the JWT subject.
+     *
+     * @param token The JWT as a string, or `null`.
+     * @return The username from the token's `subject`, or `null` if the token is missing, invalid, or expired.
+     */
     fun usernameFromToken(token: String?): String? =
         try {
             ensureVerifier().verify(token).subject
@@ -1102,6 +1102,7 @@ class DocumentRepository(
      * Clears the in-memory document index, resets the next document id to 1, persists the empty state, and removes files from the configured upload directory.
      *
      * @return The number of files successfully deleted from the upload directory.
+     */
     suspend fun dropAll(): Int {
         ensureLoaded()
         return mutex.withLock {
@@ -1372,7 +1373,7 @@ private fun isSupportedTextContent(contentType: ContentType?): Boolean {
  * Endpoints:
  * - GET `/` : returns the authenticated user's documents.
  * - POST `/upload` : accepts a JSON payload to create a document from text and enqueues ingestion into PathRAG.
- * - POST `/upload-file` : accepts multipart file uploads (text/* and select application/* subtypes), saves files,
+ * - POST `/upload-file` : accepts multipart file uploads (text types and select application subtypes), saves files,
  *   and enqueues ingestion; rejects unsupported media types.
  * - POST `/query` : runs a query against PathRAG and returns the answer.
  * - GET `/{document_id}` : returns a specific document for the authenticated user.
@@ -1610,54 +1611,54 @@ class EnvironmentConfig private constructor(
     private val values: Map<String, String>,
 ) {
     /**
- * Retrieve a value for the given key from the process environment or the loaded values map.
- *
- * @param key The name of the environment variable or map key to look up.
- * @return The corresponding value if present, or `null` if not found.
- */
+     * Retrieve a value for the given key from the process environment or the loaded values map.
+     *
+     * @param key The name of the environment variable or map key to look up.
+     * @return The corresponding value if present, or `null` if not found.
+     */
     operator fun get(key: String): String? = System.getenv(key) ?: values[key]
 
     /**
- * Provides the configured CORS origins as a comma-separated string or "*" to allow all origins.
- *
- * @return The value of the `CORS_ORIGINS` environment variable, or "*" if not set.
- */
+     * Provides the configured CORS origins as a comma-separated string or "*" to allow all origins.
+     *
+     * @return The value of the `CORS_ORIGINS` environment variable, or "*" if not set.
+     */
     fun corsOrigins(): String = this["CORS_ORIGINS"] ?: "*"
 
     /**
- * Returns the configured chunk size in tokens used for splitting documents.
- *
- * @return The chunk token size read from `CHUNK_TOKEN_SIZE`, or `800` if the environment variable is missing or invalid.
- */
+     * Returns the configured chunk size in tokens used for splitting documents.
+     *
+     * @return The chunk token size read from `CHUNK_TOKEN_SIZE`, or `800` if the environment variable is missing or invalid.
+     */
     fun chunkTokenSize(): Int = this["CHUNK_TOKEN_SIZE"]?.toIntOrNull() ?: 800
 
     /**
- * Provides the overlap token size used when chunking documents.
- *
- * @return The `CHUNK_OVERLAP_TOKEN_SIZE` value parsed as an `Int`, or `120` if the environment value is missing or invalid.
- */
+     * Provides the overlap token size used when chunking documents.
+     *
+     * @return The `CHUNK_OVERLAP_TOKEN_SIZE` value parsed as an `Int`, or `120` if the environment value is missing or invalid.
+     */
     fun chunkOverlapTokenSize(): Int = this["CHUNK_OVERLAP_TOKEN_SIZE"]?.toIntOrNull() ?: 120
 
     /**
- * MongoDB connection URI for Mongo-backed storage.
- *
- * @return The MongoDB connection URI if present, `null` otherwise.
- */
+     * MongoDB connection URI for Mongo-backed storage.
+     *
+     * @return The MongoDB connection URI if present, `null` otherwise.
+     */
     fun mongoUri(): String? = this["MONGO_URI"]
 
     /**
- * MongoDB database name used for Mongo-backed storage.
- *
- * @return The configured MongoDB database name (value of `MONGO_DATABASE`), or `null` if not set.
- */
+     * MongoDB database name used for Mongo-backed storage.
+     *
+     * @return The configured MongoDB database name (value of `MONGO_DATABASE`), or `null` if not set.
+     */
     fun mongoDatabase(): String? = this["MONGO_DATABASE"]
 
     companion object {
         /**
- * Create an EnvironmentConfig with no in-memory overrides so lookups come from the system environment.
- *
- * @return An EnvironmentConfig backed by an empty overrides map; values will be read from system environment variables.
- */
+         * Create an EnvironmentConfig with no in-memory overrides so lookups come from the system environment.
+         *
+         * @return An EnvironmentConfig backed by an empty overrides map; values will be read from system environment variables.
+         */
         fun empty() = EnvironmentConfig(emptyMap())
 
         /**

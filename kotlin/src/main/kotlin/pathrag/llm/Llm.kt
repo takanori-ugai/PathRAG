@@ -158,6 +158,7 @@ suspend fun openAiComplete(
  * @param maxTokens Optional maximum token limit to request from the model (honored if supported by the client).
  * @param hashingKv Optional opaque value used for request hashing or deduplication by callers.
  * @return The model's text completion, or the sentinel Prompts.FAIL_RESPONSE if the call fails after retries.
+ */
 @Suppress("TooGenericExceptionCaught")
 suspend fun ollamaComplete(
     model: String,
@@ -323,13 +324,13 @@ suspend fun ollamaEmbedding(inputs: List<String>): List<DoubleArray> {
 }
 
 /**
-     * Create an embedding function wrapper configured from environment variables.
-     *
-     * Constructs an EmbeddingFunc populated with the provider-selected embedding implementation,
-     * the provider's embedding dimension, and the provider's maximum token size.
-     *
-     * @return An EmbeddingFunc configured with the chosen provider's embedding dimension, maximum token size, and implementation function.
-     */
+ * Create an embedding function wrapper configured from environment variables.
+ *
+ * Constructs an EmbeddingFunc populated with the provider-selected embedding implementation,
+ * the provider's embedding dimension, and the provider's maximum token size.
+ *
+ * @return An EmbeddingFunc configured with the chosen provider's embedding dimension, maximum token size, and implementation function.
+ */
 fun defaultEmbeddingFunc(): EmbeddingFunc =
     embeddingModelConfig().let { (provider, dim, ctx) ->
         val func =

@@ -57,15 +57,15 @@ class Neo4jVectorStorage(
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeRead { tx -> block(tx) } } }
 
     /**
-         * Execute a write transaction against the Neo4j driver and return the block's result.
-         *
-         * The provided `block` is invoked with a `TransactionContext` inside a write transaction and its
-         * return value is propagated to the caller.
-         *
-         * @param block Lambda that performs operations within the write transaction using the `TransactionContext`.
-         * @return The value returned by `block`.
-         */
-        private suspend fun <T> write(block: (TransactionContext) -> T): T =
+     * Execute a write transaction against the Neo4j driver and return the block's result.
+     *
+     * The provided `block` is invoked with a `TransactionContext` inside a write transaction and its
+     * return value is propagated to the caller.
+     *
+     * @param block Lambda that performs operations within the write transaction using the `TransactionContext`.
+     * @return The value returned by `block`.
+     */
+    private suspend fun <T> write(block: (TransactionContext) -> T): T =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
     /**
@@ -74,6 +74,7 @@ class Neo4jVectorStorage(
      * @param query The text query to embed and search.
      * @param topK Maximum number of results to return.
      * @return A list of result maps, each containing `content`, `score`, and any persisted metadata fields; results are ordered by descending `score` and limited to `topK`.
+     */
     @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
         query: String,

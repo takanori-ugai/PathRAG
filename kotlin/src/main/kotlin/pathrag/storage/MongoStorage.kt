@@ -46,11 +46,11 @@ class MongoKVStorage<T : Any>(
     }
 
     /**
-             * Retrieve all document IDs (keys) from the storage collection.
-             *
-             * @return A list of document `_id` values as strings representing the stored keys.
-             */
-            override suspend fun allKeys(): List<String> =
+     * Retrieve all document IDs (keys) from the storage collection.
+     *
+     * @return A list of document `_id` values as strings representing the stored keys.
+     */
+    override suspend fun allKeys(): List<String> =
         collection
             .find()
             .projection(org.bson.Document("_id", 1))
@@ -58,14 +58,14 @@ class MongoKVStorage<T : Any>(
             .toList()
 
     /**
-             * Retrieve the value stored under the given id from the collection.
-             *
-             * The returned value will not include the internal `_id` field stored in the database.
-             *
-             * @param id The document id/key to look up.
-             * @return The document cast to `T` if a matching document exists, `null` otherwise.
-             */
-            override suspend fun getById(id: String): T? =
+     * Retrieve the value stored under the given id from the collection.
+     *
+     * The returned value will not include the internal `_id` field stored in the database.
+     *
+     * @param id The document id/key to look up.
+     * @return The document cast to `T` if a matching document exists, `null` otherwise.
+     */
+    override suspend fun getById(id: String): T? =
         collection
             .find(Filters.eq("_id", id))
             .firstOrNull()
@@ -215,6 +215,7 @@ class MongoVectorStorage(
      * @param query The text query to embed and use for similarity search.
      * @param topK Maximum number of results to return.
      * @return A list of maps for the top matching documents; each map contains the keys `content`, `score`, and any stored metadata fields.
+     */
     @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
         query: String,
@@ -365,12 +366,12 @@ class MongoGraphStorage(
     }
 
     /**
- * Checks whether a node with the given ID exists in the node collection.
- *
- * @param nodeId The node identifier to check for existence.
- * @return `true` if a node with the given ID exists, `false` otherwise.
- */
-override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocuments(Filters.eq("_id", nodeId)) > 0
+     * Checks whether a node with the given ID exists in the node collection.
+     *
+     * @param nodeId The node identifier to check for existence.
+     * @return `true` if a node with the given ID exists, `false` otherwise.
+     */
+    override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocuments(Filters.eq("_id", nodeId)) > 0
 
     /**
      * Determines whether an edge exists from the given source node to the given target node.
@@ -385,12 +386,12 @@ override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocu
     ): Boolean = edgeCollection.countDocuments(Filters.and(Filters.eq("src", sourceNodeId), Filters.eq("tgt", targetNodeId))) > 0
 
     /**
-         * Compute the number of edges connected to a node.
-         *
-         * @param nodeId Identifier of the node whose incident edges are counted.
-         * @return The number of documents where `src` or `tgt` equals the given `nodeId`.
-         */
-        override suspend fun nodeDegree(nodeId: String): Int =
+     * Compute the number of edges connected to a node.
+     *
+     * @param nodeId Identifier of the node whose incident edges are counted.
+     * @return The number of documents where `src` or `tgt` equals the given `nodeId`.
+     */
+    override suspend fun nodeDegree(nodeId: String): Int =
         edgeCollection.countDocuments(Filters.or(Filters.eq("src", nodeId), Filters.eq("tgt", nodeId))).toInt()
 
     /**
@@ -404,12 +405,12 @@ override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocu
     ): Int = if (hasEdge(srcId, tgtId)) 1 else 0
 
     /**
-             * Retrieve a node document by its identifier.
-             *
-             * @param nodeId The node's identifier.
-             * @return The node document as a map with the `_id` field removed, or `null` if no node exists for the given id.
-             */
-            override suspend fun getNode(nodeId: String): Map<String, Any?>? =
+     * Retrieve a node document by its identifier.
+     *
+     * @param nodeId The node's identifier.
+     * @return The node document as a map with the `_id` field removed, or `null` if no node exists for the given id.
+     */
+    override suspend fun getNode(nodeId: String): Map<String, Any?>? =
         nodeCollection
             .find(Filters.eq("_id", nodeId))
             .firstOrNull()
@@ -419,13 +420,13 @@ override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocu
             }
 
     /**
-             * Retrieve the edge document connecting two nodes.
-             *
-             * @param sourceNodeId The ID of the source node.
-             * @param targetNodeId The ID of the target node.
-             * @return The edge document as a map with the `_id` field removed, or `null` if no edge exists.
-             */
-            override suspend fun getEdge(
+     * Retrieve the edge document connecting two nodes.
+     *
+     * @param sourceNodeId The ID of the source node.
+     * @param targetNodeId The ID of the target node.
+     * @return The edge document as a map with the `_id` field removed, or `null` if no edge exists.
+     */
+    override suspend fun getEdge(
         sourceNodeId: String,
         targetNodeId: String,
     ): Map<String, Any?>? =
@@ -438,12 +439,12 @@ override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocu
             }
 
     /**
-             * Retrieves all edges connected to the given node ID.
-             *
-             * @param sourceNodeId The node ID whose incident edges to fetch.
-             * @return A list of pairs `(src, tgt)` for each edge where `src` or `tgt` equals `sourceNodeId`.
-             */
-            override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
+     * Retrieves all edges connected to the given node ID.
+     *
+     * @param sourceNodeId The node ID whose incident edges to fetch.
+     * @return A list of pairs `(src, tgt)` for each edge where `src` or `tgt` equals `sourceNodeId`.
+     */
+    override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
         edgeCollection
             .find(Filters.or(Filters.eq("src", sourceNodeId), Filters.eq("tgt", sourceNodeId)))
             .map { doc -> doc.getString("src") to doc.getString("tgt") }
@@ -538,11 +539,11 @@ override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocu
     }
 
     /**
-             * Retrieve all node IDs stored in the node collection.
-             *
-             * @return A list of node IDs as strings (order not guaranteed).
-             */
-            override suspend fun nodes(): List<String> =
+     * Retrieve all node IDs stored in the node collection.
+     *
+     * @return A list of node IDs as strings (order not guaranteed).
+     */
+    override suspend fun nodes(): List<String> =
         nodeCollection
             .find()
             .projection(org.bson.Document("_id", 1))
@@ -550,11 +551,11 @@ override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocu
             .toList()
 
     /**
-             * Retrieves all edges from the edge collection as (source, target) ID pairs.
-             *
-             * @return A list of pairs where the first element is the source node ID and the second element is the target node ID.
-             */
-            override suspend fun edges(): List<Pair<String, String>> =
+     * Retrieves all edges from the edge collection as (source, target) ID pairs.
+     *
+     * @return A list of pairs where the first element is the source node ID and the second element is the target node ID.
+     */
+    override suspend fun edges(): List<Pair<String, String>> =
         edgeCollection
             .find()
             .map { doc -> doc.getString("src") to doc.getString("tgt") }

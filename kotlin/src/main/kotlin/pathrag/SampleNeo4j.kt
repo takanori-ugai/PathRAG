@@ -4,20 +4,16 @@ import kotlinx.coroutines.runBlocking
 import java.nio.file.Paths
 
 /**
- * Sample showing how to run PathRAG with Neo4j-backed graph storage.
+ * Demonstrates PathRAG usage with Neo4j-backed graph storage by loading configuration, creating a PathRAG instance,
+ * inserting sample Dickens-related texts, and performing local, global, and hybrid queries while printing results.
  *
- * Set Neo4j connection via env (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD),
- * then run: ./gradlew execute -PmainClass=pathrag.SampleNeo4jKt
+ * Configure Neo4j via env (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD) and run with
+ * `./gradlew execute -PmainClass=pathrag.SampleNeo4jKt`. The program loads environment variables from ../.env
+ * (with sensible defaults), constructs a typed Neo4j ExtraConfig and AddonParams, configures embedding cache and
+ * tokenization parameters, inserts example documents, and then queries the RAG in three modes ("local", "global",
+ * "hybrid"), printing each question and its answer.
  */
-/**
-     * Demonstrates PathRAG usage with Neo4j-backed graph storage by loading configuration, creating a PathRAG instance,
-     * inserting sample Dickens-related texts, and performing local, global, and hybrid queries while printing results.
-     *
-     * The program loads environment variables from ../.env (with sensible defaults), constructs a typed Neo4j ExtraConfig
-     * and AddonParams, configures embedding cache and tokenization parameters, inserts example documents, and then
-     * queries the RAG in three modes ("local", "global", "hybrid"), printing each question and its answer.
-     */
-    fun main() =
+fun main() =
     runBlocking {
         val env = EnvironmentConfig.load(Paths.get("../.env"))
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"

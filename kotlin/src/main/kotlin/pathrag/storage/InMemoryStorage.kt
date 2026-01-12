@@ -25,17 +25,17 @@ class JsonKVStorage<T : Any>(
     private val data = ConcurrentHashMap<String, T>()
 
     /**
- * Lists all stored keys.
- *
- * @return A list of all keys currently stored.
- */
+     * Lists all stored keys.
+     *
+     * @return A list of all keys currently stored.
+     */
     override suspend fun allKeys(): List<String> = data.keys().toList()
 
     /**
- * Retrieve the value associated with the given id.
- *
- * @return The value for `id` if present, or `null` if no entry exists.
- */
+     * Retrieve the value associated with the given id.
+     *
+     * @return The value for `id` if present, or `null` if no entry exists.
+     */
     override suspend fun getById(id: String): T? = data[id]
 
     /**
@@ -154,6 +154,7 @@ class NanoVectorDBStorage(
      *
      * @param data Map from entry id to a map of properties; the property "content" is used as the text to embed and other keys are considered metadata.
      * @throws IllegalStateException If embedding generation fails.
+     */
     @Suppress("TooGenericExceptionCaught")
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
         val items = data.entries.toList()
@@ -248,11 +249,11 @@ class NetworkXStorage(
     private var cachedPagerank: Map<String, Double>? = null
 
     /**
- * Determine whether a node with the given identifier exists in the graph.
- *
- * @param nodeId The node identifier to check.
- * @return `true` if a node with the given identifier exists, `false` otherwise.
- */
+     * Determine whether a node with the given identifier exists in the graph.
+     *
+     * @param nodeId The node identifier to check.
+     * @return `true` if a node with the given identifier exists, `false` otherwise.
+     */
     override suspend fun hasNode(nodeId: String): Boolean = nodes.containsKey(nodeId)
 
     /**
@@ -268,10 +269,10 @@ class NetworkXStorage(
     ): Boolean = edges.containsKey(sourceNodeId to targetNodeId)
 
     /**
- * Get the number of edges connected to the given node.
- *
- * @return The count of edges where the node is either the source or the target.
- */
+     * Get the number of edges connected to the given node.
+     *
+     * @return The count of edges where the node is either the source or the target.
+     */
     override suspend fun nodeDegree(nodeId: String): Int = edges.keys.count { it.first == nodeId || it.second == nodeId }
 
     /**
@@ -285,11 +286,11 @@ class NetworkXStorage(
     ): Int = if (edges.containsKey(srcId to tgtId)) 1 else 0
 
     /**
- * Retrieve a copy of the properties for the node with the given id.
- *
- * @param nodeId Identifier of the node to fetch.
- * @return A map containing the node's properties if the node exists, or `null` if it does not.
- */
+     * Retrieve a copy of the properties for the node with the given id.
+     *
+     * @param nodeId Identifier of the node to fetch.
+     * @return A map containing the node's properties if the node exists, or `null` if it does not.
+     */
     override suspend fun getNode(nodeId: String): Map<String, Any?>? = nodes[nodeId]?.toMap()
 
     /**
@@ -305,11 +306,11 @@ class NetworkXStorage(
     ): Map<String, Any?>? = edges[sourceNodeId to targetNodeId]?.toMap()
 
     /**
-         * List all edges that include the given node.
-         *
-         * @param sourceNodeId The node identifier to search for.
-         * @return A list of pairs `(sourceId, targetId)` for each edge where the node is either the source or the target.
-         */
+     * List all edges that include the given node.
+     *
+     * @param sourceNodeId The node identifier to search for.
+     * @return A list of pairs `(sourceId, targetId)` for each edge where the node is either the source or the target.
+     */
     override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
         edges.keys.filter { it.first == sourceNodeId || it.second == sourceNodeId }
 
@@ -386,17 +387,17 @@ class NetworkXStorage(
     }
 
     /**
- * Retrieves all node identifiers present in the graph.
- *
- * @return A list of node identifiers.
- */
+     * Retrieves all node identifiers present in the graph.
+     *
+     * @return A list of node identifiers.
+     */
     override suspend fun nodes(): List<String> = nodes.keys().toList()
 
     /**
- * Return all stored edges as a list of (sourceNodeId, targetNodeId) pairs.
- *
- * @return A list containing a pair for each edge where the first element is the source node id and the second is the target node id.
- */
+     * Return all stored edges as a list of (sourceNodeId, targetNodeId) pairs.
+     *
+     * @return A list containing a pair for each edge where the first element is the source node id and the second is the target node id.
+     */
     override suspend fun edges(): List<Pair<String, String>> = edges.keys.toList()
 
     /**
@@ -421,6 +422,7 @@ class NetworkXStorage(
      *
      * @param algorithm The embedding algorithm name (`"node2vec"` or other to select metadata embedding).
      * @return A pair where the first element is a flattened DoubleArray of embeddings (concatenated per-node vectors) and the second element is the list of node IDs in the same order as the embeddings.
+     */
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         val labels = nodes.keys().toList()
         if (labels.isEmpty()) return DoubleArray(0) to emptyList()

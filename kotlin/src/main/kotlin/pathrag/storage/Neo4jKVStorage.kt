@@ -50,21 +50,21 @@ class Neo4jKVStorage<T : Any>(
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeRead { tx -> block(tx) } } }
 
     /**
-         * Executes the provided block inside a Neo4j write transaction.
-         *
-         * The `block` is invoked with a `TransactionContext` scoped to the transaction and its return value is forwarded.
-         *
-         * @param block Lambda to execute within the write transaction; receives the transaction context.
-         * @return The value produced by `block`.
-         */
-        private suspend fun <R> write(block: (TransactionContext) -> R): R =
+     * Executes the provided block inside a Neo4j write transaction.
+     *
+     * The `block` is invoked with a `TransactionContext` scoped to the transaction and its return value is forwarded.
+     *
+     * @param block Lambda to execute within the write transaction; receives the transaction context.
+     * @return The value produced by `block`.
+     */
+    private suspend fun <R> write(block: (TransactionContext) -> R): R =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
     /**
-         * List all keys stored in this storage's namespace.
-         *
-         * @return A list of key strings present in the namespace.
-         */
+     * List all keys stored in this storage's namespace.
+     *
+     * @return A list of key strings present in the namespace.
+     */
     override suspend fun allKeys(): List<String> =
         read { tx ->
             tx
@@ -73,11 +73,11 @@ class Neo4jKVStorage<T : Any>(
         }
 
     /**
-         * Retrieve the stored value for the given id.
-         *
-         * @param id The record identifier.
-         * @return The node's properties as `T` with the `id` property removed, or `null` if no node exists.
-         */
+     * Retrieve the stored value for the given id.
+     *
+     * @param id The record identifier.
+     * @return The node's properties as `T` with the `id` property removed, or `null` if no node exists.
+     */
     override suspend fun getById(id: String): T? =
         read { tx ->
             tx

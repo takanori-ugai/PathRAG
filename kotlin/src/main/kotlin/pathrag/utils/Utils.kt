@@ -114,12 +114,12 @@ fun computeMdHashId(
 }
 
 /**
-     * Produce a higher-order wrapper that enforces a maximum number of concurrent invocations for a suspending no-argument function.
-     *
-     * @param maxSize The maximum number of concurrent executions allowed.
-     * @param waitingTimeMillis Reserved for a wait/backoff duration in milliseconds (currently not used by the implementation).
-     * @return A function that accepts a suspending no-argument function and returns a suspending function which enforces the specified concurrency limit when invoked.
-     */
+ * Produce a higher-order wrapper that enforces a maximum number of concurrent invocations for a suspending no-argument function.
+ *
+ * @param maxSize The maximum number of concurrent executions allowed.
+ * @param waitingTimeMillis Reserved for a wait/backoff duration in milliseconds (currently not used by the implementation).
+ * @return A function that accepts a suspending no-argument function and returns a suspending function which enforces the specified concurrency limit when invoked.
+ */
 fun limitAsyncFuncCall(
     maxSize: Int,
     waitingTimeMillis: Long = 1,
