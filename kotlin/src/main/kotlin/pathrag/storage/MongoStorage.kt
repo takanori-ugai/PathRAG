@@ -45,14 +45,27 @@ class MongoKVStorage<T : Any>(
         client.close()
     }
 
-    override suspend fun allKeys(): List<String> =
+    /**
+             * Retrieve all document IDs (keys) from the storage collection.
+             *
+             * @return A list of document `_id` values as strings representing the stored keys.
+             */
+            override suspend fun allKeys(): List<String> =
         collection
             .find()
             .projection(org.bson.Document("_id", 1))
             .map { it.getString("_id") }
             .toList()
 
-    override suspend fun getById(id: String): T? =
+    /**
+             * Retrieve the value stored under the given id from the collection.
+             *
+             * The returned value will not include the internal `_id` field stored in the database.
+             *
+             * @param id The document id/key to look up.
+             * @return The document cast to `T` if a matching document exists, `null` otherwise.
+             */
+            override suspend fun getById(id: String): T? =
         collection
             .find(Filters.eq("_id", id))
             .firstOrNull()
@@ -62,6 +75,13 @@ class MongoKVStorage<T : Any>(
                 doc.toMap() as T
             }
 
+    /**
+     * Retrieves documents for the given list of IDs and returns results aligned to the input order.
+     *
+     * @param ids The list of document IDs to fetch.
+     * @param fields Optional set of field names to project; if provided only these fields (plus `_id`) are returned.
+     * @return A list whose elements correspond to the input `ids`: the mapped value cast to `T` when a document exists, or `null` when it does not.
+     */
     override suspend fun getByIds(
         ids: List<String>,
         fields: Set<String>?,
@@ -91,6 +111,12 @@ class MongoKVStorage<T : Any>(
         }
     }
 
+    /**
+     * Determine which keys from the provided list are missing in the storage.
+     *
+     * @param data List of keys to check for existence.
+     * @return `Set<String>` containing the keys from `data` that do not exist in the collection.
+     */
     override suspend fun filterKeys(data: List<String>): Set<String> {
         if (data.isEmpty()) return emptySet()
         val existing =
@@ -103,6 +129,16 @@ class MongoKVStorage<T : Any>(
         return data.toSet() - existing
     }
 
+    /**
+     * Inserts or updates multiple key-value entries into the storage collection.
+     *
+     * Accepts a map of id -> value and upserts each entry as a MongoDB document with `_id` set to the id.
+     * If `data` is empty the method returns immediately. Each `value` must be a Map with String keys;
+     * any entry named `_id` in the value is ignored and the provided map key is used as the document `_id`.
+     *
+     * @param data Mapping of document id to value to upsert.
+     * @throws IllegalArgumentException If a value is not a Map or if a map key is not a String.
+     */
     override suspend fun upsert(data: Map<String, T>) {
         if (data.isEmpty()) return
         val opts = ReplaceOptions().upsert(true)
@@ -134,6 +170,9 @@ class MongoKVStorage<T : Any>(
         collection.bulkWrite(writes)
     }
 
+    /**
+     * Drops the MongoDB collection backing this storage namespace.
+     */
     override suspend fun drop() {
         collection.drop()
     }
@@ -166,6 +205,16 @@ class MongoVectorStorage(
         client.close()
     }
 
+    /**
+     * Searches the vector collection for documents most similar to the provided query text.
+     *
+     * If the query is blank, if embedding generation fails, or if no embedding is produced, an empty list is returned.
+     *
+     * Results are ordered by cosine similarity (highest first) and limited to `topK`.
+     *
+     * @param query The text query to embed and use for similarity search.
+     * @param topK Maximum number of results to return.
+     * @return A list of maps for the top matching documents; each map contains the keys `content`, `score`, and any stored metadata fields.
     @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
         query: String,
@@ -193,6 +242,17 @@ class MongoVectorStorage(
             .take(topK)
     }
 
+    /**
+     * Persists vector documents for entries that contain non-blank `content`.
+     *
+     * For each input entry with a non-blank `content` field, generates an embedding via the configured
+     * embedding function and upserts a document containing `_id`, `content`, `embedding` (as a list),
+     * and any configured metadata fields. If the input is empty, no entries contain `content`, or the
+     * number of returned embeddings does not match the number of valid entries, no writes are performed.
+     *
+     * @param data Map of document id to document fields; each value should include a `content` field
+     *             whose text will be embedded and persisted.
+     */
     override suspend fun upsert(data: Map<String, Map<String, Any?>>) {
         if (data.isEmpty()) return
         val items = data.entries.toList()
@@ -227,6 +287,13 @@ class MongoVectorStorage(
         }
     }
 
+    /**
+     * Removes all vector documents for the given entity from the collection.
+     *
+     * Deletes documents whose `_id` matches the MD-hashed id of `entityName` (prefixed with `ent-`) and also deletes documents with `entity_name` equal to `entityName`.
+     *
+     * @param entityName The entity's name used to compute the hashed id and to match the `entity_name` metadata field.
+     */
     override suspend fun deleteEntity(entityName: String) {
         val entityId = computeMdHashId(entityName, prefix = "ent-")
         // Delete by both the hashed id (legacy) and the stored entity_name metadata.
@@ -234,10 +301,24 @@ class MongoVectorStorage(
         collection.deleteMany(Filters.eq("entity_name", entityName))
     }
 
+    /**
+     * Deletes all relations involving the given entity.
+     *
+     * @param entityName The entity identifier used to match against the `src_id` and `tgt_id` fields; all matching relation documents will be removed.
+     */
     override suspend fun deleteRelation(entityName: String) {
         collection.deleteMany(Filters.or(Filters.eq("src_id", entityName), Filters.eq("tgt_id", entityName)))
     }
 
+    /**
+     * Delete the relation between two entities identified by their IDs.
+     *
+     * Deletes a relation document using the legacy hashed relation ID and also removes any documents
+     * whose `src_id` and `tgt_id` fields match the provided IDs.
+     *
+     * @param srcId ID of the source entity.
+     * @param tgtId ID of the target entity.
+     */
     override suspend fun deleteRelationBetween(
         srcId: String,
         tgtId: String,
@@ -248,6 +329,9 @@ class MongoVectorStorage(
         collection.deleteMany(Filters.and(Filters.eq("src_id", srcId), Filters.eq("tgt_id", tgtId)))
     }
 
+    /**
+     * Drops the MongoDB collection backing this storage namespace.
+     */
     override suspend fun drop() {
         collection.drop()
     }
@@ -280,22 +364,52 @@ class MongoGraphStorage(
         client.close()
     }
 
-    override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocuments(Filters.eq("_id", nodeId)) > 0
+    /**
+ * Checks whether a node with the given ID exists in the node collection.
+ *
+ * @param nodeId The node identifier to check for existence.
+ * @return `true` if a node with the given ID exists, `false` otherwise.
+ */
+override suspend fun hasNode(nodeId: String): Boolean = nodeCollection.countDocuments(Filters.eq("_id", nodeId)) > 0
 
+    /**
+     * Determines whether an edge exists from the given source node to the given target node.
+     *
+     * @param sourceNodeId The ID of the source node.
+     * @param targetNodeId The ID of the target node.
+     * @return `true` if an edge with `src` equal to `sourceNodeId` and `tgt` equal to `targetNodeId` exists, `false` otherwise.
+     */
     override suspend fun hasEdge(
         sourceNodeId: String,
         targetNodeId: String,
     ): Boolean = edgeCollection.countDocuments(Filters.and(Filters.eq("src", sourceNodeId), Filters.eq("tgt", targetNodeId))) > 0
 
-    override suspend fun nodeDegree(nodeId: String): Int =
+    /**
+         * Compute the number of edges connected to a node.
+         *
+         * @param nodeId Identifier of the node whose incident edges are counted.
+         * @return The number of documents where `src` or `tgt` equals the given `nodeId`.
+         */
+        override suspend fun nodeDegree(nodeId: String): Int =
         edgeCollection.countDocuments(Filters.or(Filters.eq("src", nodeId), Filters.eq("tgt", nodeId))).toInt()
 
+    /**
+     * Computes an integer indicator of whether an edge exists between two nodes.
+     *
+     * @return `1` if an edge exists from `srcId` to `tgtId`, `0` otherwise.
+     */
     override suspend fun edgeDegree(
         srcId: String,
         tgtId: String,
     ): Int = if (hasEdge(srcId, tgtId)) 1 else 0
 
-    override suspend fun getNode(nodeId: String): Map<String, Any?>? =
+    /**
+             * Retrieve a node document by its identifier.
+             *
+             * @param nodeId The node's identifier.
+             * @return The node document as a map with the `_id` field removed, or `null` if no node exists for the given id.
+             */
+            override suspend fun getNode(nodeId: String): Map<String, Any?>? =
         nodeCollection
             .find(Filters.eq("_id", nodeId))
             .firstOrNull()
@@ -304,7 +418,14 @@ class MongoGraphStorage(
                 doc.toMap()
             }
 
-    override suspend fun getEdge(
+    /**
+             * Retrieve the edge document connecting two nodes.
+             *
+             * @param sourceNodeId The ID of the source node.
+             * @param targetNodeId The ID of the target node.
+             * @return The edge document as a map with the `_id` field removed, or `null` if no edge exists.
+             */
+            override suspend fun getEdge(
         sourceNodeId: String,
         targetNodeId: String,
     ): Map<String, Any?>? =
@@ -316,12 +437,26 @@ class MongoGraphStorage(
                 doc.toMap()
             }
 
-    override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
+    /**
+             * Retrieves all edges connected to the given node ID.
+             *
+             * @param sourceNodeId The node ID whose incident edges to fetch.
+             * @return A list of pairs `(src, tgt)` for each edge where `src` or `tgt` equals `sourceNodeId`.
+             */
+            override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
         edgeCollection
             .find(Filters.or(Filters.eq("src", sourceNodeId), Filters.eq("tgt", sourceNodeId)))
             .map { doc -> doc.getString("src") to doc.getString("tgt") }
             .toList()
 
+    /**
+     * Upserts a node document into the node collection for the given node id.
+     *
+     * The node's `_id` field is set to `nodeId`; any existing document with the same `_id` is replaced.
+     *
+     * @param nodeId The identifier to use as the document's `_id`.
+     * @param nodeData Map of fields to store for the node; an existing `_id` entry, if present, will be overwritten.
+     */
     override suspend fun upsertNode(
         nodeId: String,
         nodeData: Map<String, Any?>,
@@ -330,6 +465,16 @@ class MongoGraphStorage(
         nodeCollection.replaceOne(Filters.eq("_id", nodeId), doc, ReplaceOptions().upsert(true))
     }
 
+    /**
+     * Insert or replace an edge document linking two nodes using the provided edge data.
+     *
+     * The stored document will include a computed `_id` (MD hash of `sourceNodeId + targetNodeId` with prefix `"edge-"`),
+     * and will always contain `src` and `tgt` fields set to the provided node IDs.
+     *
+     * @param sourceNodeId The source node identifier for the edge.
+     * @param targetNodeId The target node identifier for the edge.
+     * @param edgeData Additional fields to persist on the edge document; these fields are stored alongside `src`, `tgt`, and the computed `_id`.
+     */
     override suspend fun upsertEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -348,6 +493,14 @@ class MongoGraphStorage(
         )
     }
 
+    /**
+     * Deletes the edge document that connects the given source node to the given target node.
+     *
+     * Removes a single document where the `src` field equals `sourceNodeId` and the `tgt` field equals `targetNodeId`, if present.
+     *
+     * @param sourceNodeId The ID of the source node (matches the `src` field).
+     * @param targetNodeId The ID of the target node (matches the `tgt` field).
+     */
     override suspend fun deleteEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -355,11 +508,24 @@ class MongoGraphStorage(
         edgeCollection.deleteOne(Filters.and(Filters.eq("src", sourceNodeId), Filters.eq("tgt", targetNodeId)))
     }
 
+    /**
+     * Deletes the node identified by [nodeId] and removes all edges connected to it.
+     *
+     * @param nodeId The node identifier; deletes the node document with `_id` equal to this value and all edges where `src` or `tgt` equals this value.
+     */
     override suspend fun deleteNode(nodeId: String) {
         nodeCollection.deleteOne(Filters.eq("_id", nodeId))
         edgeCollection.deleteMany(Filters.or(Filters.eq("src", nodeId), Filters.eq("tgt", nodeId)))
     }
 
+    /**
+     * Generate embeddings for all nodes using the given algorithm.
+     *
+     * Currently supports "node2vec" (case-insensitive); other values fall back to the same metadata-based embedding path.
+     *
+     * @param algorithm The embedding algorithm name to use.
+     * @return A pair where the first element is a flattened `DoubleArray` containing embedding vectors and the second element is the list of node IDs (labels) corresponding to those embeddings.
+     */
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         val labels = nodes()
         if (labels.isEmpty()) return DoubleArray(0) to emptyList()
@@ -371,24 +537,52 @@ class MongoGraphStorage(
         }
     }
 
-    override suspend fun nodes(): List<String> =
+    /**
+             * Retrieve all node IDs stored in the node collection.
+             *
+             * @return A list of node IDs as strings (order not guaranteed).
+             */
+            override suspend fun nodes(): List<String> =
         nodeCollection
             .find()
             .projection(org.bson.Document("_id", 1))
             .map { it.getString("_id") }
             .toList()
 
-    override suspend fun edges(): List<Pair<String, String>> =
+    /**
+             * Retrieves all edges from the edge collection as (source, target) ID pairs.
+             *
+             * @return A list of pairs where the first element is the source node ID and the second element is the target node ID.
+             */
+            override suspend fun edges(): List<Pair<String, String>> =
         edgeCollection
             .find()
             .map { doc -> doc.getString("src") to doc.getString("tgt") }
             .toList()
 
+    /**
+     * Removes all graph data by dropping the node and edge collections.
+     *
+     * This permanently deletes every node and edge stored in the graph namespace.
+     */
     override suspend fun drop() {
         nodeCollection.drop()
         edgeCollection.drop()
     }
 
+    /**
+     * Compute embeddings for the given node labels using stored metadata or a local fallback.
+     *
+     * If an `EmbeddingFunc` is available, generates a text string for each label in the form
+     * "`<id> <entity_type> <description>`" and obtains an embedding vector for each text.
+     * If no embedding function is provided, produces a 2-dimensional feature vector per label
+     * containing `[pagerank, degree]` computed locally.
+     *
+     * @param labels The ordered list of node IDs to embed.
+     * @return A pair where the first element is a flattened `DoubleArray` containing the concatenated
+     *         embedding vectors in the same order as `labels` (length = labels.size * embeddingDim),
+     *         and the second element is the input `labels` list aligned to those embeddings.
+     */
     private suspend fun runMetadataEmbedding(labels: List<String>): Pair<DoubleArray, List<String>> {
         val func = embeddingFunc
         return if (func != null) {
@@ -421,6 +615,14 @@ class MongoGraphStorage(
         }
     }
 
+    /**
+     * Computes PageRank scores for all nodes using the provided damping and convergence parameters.
+     *
+     * @param damping The damping factor (probability of following an outgoing edge) between 0.0 and 1.0.
+     * @param maxIter Maximum number of iterations to perform.
+     * @param tol Convergence tolerance; iteration stops when score changes are below this value.
+     * @return A map from node id to its PageRank score.
+     */
     private suspend fun computePagerankFallback(
         damping: Double = 0.85,
         maxIter: Int = 100,

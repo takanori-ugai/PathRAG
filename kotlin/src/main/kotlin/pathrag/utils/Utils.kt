@@ -22,7 +22,9 @@ import kotlin.math.sqrt
 private val internalLogger = KotlinLogging.logger("PathRAG")
 
 /**
- * Lightweight logger accessor for internal use.
+ * Provides access to the internal logger used by the PathRAG utilities.
+ *
+ * @return The internal logger instance.
  */
 fun log() = internalLogger
 
@@ -42,6 +44,16 @@ data class EmbeddingFunc(
 ) {
     private val semaphore = if (concurrentLimit > 0) Semaphore(concurrentLimit) else null
 
+    /**
+     * Invoke the embedding function to compute embedding vectors for the provided inputs.
+     *
+     * Computes an embedding for each input string, enforcing the configured embedding dimension
+     * and respecting any concurrency limit configured for the embedding function.
+     *
+     * @param inputs The list of input strings to embed; result order corresponds to this list.
+     * @return A list of `DoubleArray` where each array is the embedding vector for the corresponding input.
+     * @throws IllegalStateException If any returned embedding does not have length equal to `embeddingDim`.
+     */
     suspend operator fun invoke(inputs: List<String>): List<DoubleArray> {
         val exec: suspend () -> List<DoubleArray> = { func(inputs) }
         val lock = semaphore
@@ -63,7 +75,13 @@ data class EmbeddingFunc(
 }
 
 /**
- * Convert a response string containing JSON into a map.
+ * Extracts the first JSON object found in the input string and parses it into a map.
+ *
+ * The returned map preserves any nested `JsonObject` values and converts JSON primitives to their string content.
+ *
+ * @param response String that contains a JSON object (possibly embedded in other text).
+ * @return A map of the parsed JSON object's keys to their values (`JsonObject` for objects, `String` for primitives).
+ * @throws IllegalStateException if no JSON object can be found or parsed from the input.
  */
 fun convertResponseToJson(response: String): Map<String, Any?> {
     val regex = Regex("\\{.*\\}", RegexOption.DOT_MATCHES_ALL)
@@ -78,7 +96,11 @@ fun convertResponseToJson(response: String): Map<String, Any?> {
 }
 
 /**
- * Compute an MD5 hash for the given content with an optional prefix.
+ * Produce a 32-character lowercase MD5 hex digest of the given content, optionally prefixed.
+ *
+ * @param content Input string to hash.
+ * @param prefix Optional string to prepend to the resulting hex hash.
+ * @return The `prefix` concatenated with the 32-character lowercase hexadecimal MD5 hash of `content`.
  */
 fun computeMdHashId(
     content: String,
@@ -92,8 +114,12 @@ fun computeMdHashId(
 }
 
 /**
- * Throttle async function invocation to a maximum concurrency.
- */
+     * Produce a higher-order wrapper that enforces a maximum number of concurrent invocations for a suspending no-argument function.
+     *
+     * @param maxSize The maximum number of concurrent executions allowed.
+     * @param waitingTimeMillis Reserved for a wait/backoff duration in milliseconds (currently not used by the implementation).
+     * @return A function that accepts a suspending no-argument function and returns a suspending function which enforces the specified concurrency limit when invoked.
+     */
 fun limitAsyncFuncCall(
     maxSize: Int,
     waitingTimeMillis: Long = 1,
@@ -106,12 +132,21 @@ fun limitAsyncFuncCall(
     }
 
 /**
- * Compute a deterministic hash for arbitrary arguments.
+ * Produces a deterministic identifier by hashing the string representation of the given arguments.
+ *
+ * @param args The values to include in the hash; the function uses their string representations.
+ * @return A 32-character hexadecimal hash representing the provided arguments.
  */
 fun computeArgsHash(vararg args: Any?): String = computeMdHashId(args.toList().toString())
 
 /**
- * Compute cosine similarity between two vectors with basic validation.
+ * Computes the cosine similarity between two vectors.
+ *
+ * Returns 0.0 if either vector is empty, their lengths differ, or either has zero magnitude.
+ *
+ * @param a First vector.
+ * @param b Second vector.
+ * @return The cosine similarity value between -1.0 and 1.0, or 0.0 for invalid or degenerate inputs.
  */
 fun cosineSimilarity(
     a: DoubleArray,
@@ -193,7 +228,13 @@ class ResponseCache(
     suspend fun getById(mode: String): Map<String, Entry>? = store[mode]
 
     /**
-     * Insert or update a cached entry.
+     * Insert or update a cache entry for the given mode and arguments, optionally computing
+     * and storing an embedding for the prompt when embedding caching is enabled, then persist to disk.
+     *
+     * @param mode The cache namespace or mode.
+     * @param argsHash Deterministic hash identifying the call arguments.
+     * @param content The response content to cache.
+     * @param prompt The prompt associated with the content (used for embedding computation when enabled).
      */
     suspend fun upsert(
         mode: String,
@@ -220,7 +261,19 @@ class ResponseCache(
     }
 
     /**
-     * Try to serve cached content by hash or similarity.
+     * Attempt to retrieve a cached response either by exact args hash or by embedding similarity.
+     *
+     * When a direct cache hit for the given `mode` and `argsHash` exists, that content is returned.
+     * If not, and embedding-based caching is enabled in `globalConfig` (via `embedding_cache_config`),
+     * the function computes an embedding for `prompt`, finds the best-matching cached entry by cosine similarity,
+     * and returns the cached content if the best similarity meets or exceeds the configured threshold.
+     * If `use_llm_check` is enabled in the embedding cache config and an LLM checker is available in `globalConfig`,
+     * the cached match is optionally validated by the LLM before returning.
+     *
+     * @param argsHash The deterministic hash of the request arguments used for exact cache lookup.
+     * @param prompt The prompt text whose embedding may be used for similarity-based matching.
+     * @param mode The cache namespace or mode to search within.
+     * @return The cached content when an exact or sufficiently similar entry is found, `null` otherwise.
      */
     suspend fun handleCache(
         argsHash: String,
@@ -322,6 +375,13 @@ class ResponseCache(
         }.onFailure { internalLogger.warn(it) { "Failed to persist cache to $path" } }
     }
 
+    /**
+     * Loads persisted cache entries from disk into the in-memory store.
+     *
+     * Reads the JSON file at the configured cache path (if any), reconstructs each persisted entry,
+     * dequantizes stored embeddings when present, and populates the in-memory store by mode and args hash.
+     * Failures are logged and do not throw.
+     */
     private fun loadFromDisk() {
         val path = cachePath ?: return
         val f = File(path)
@@ -346,6 +406,19 @@ class ResponseCache(
     }
 }
 
+/**
+ * Quantizes a non-empty embedding vector into 8-bit bytes and returns the quantized bytes with metadata.
+ *
+ * @param embedding The embedding values to quantize; must not be empty.
+ * @param bits Quantization bit width (only `8` is supported).
+ * @return A Quadruple containing:
+ *   - `ByteArray`: quantized values (length equals `embedding.size`),
+ *   - `Double`: minimum value from the original embedding,
+ *   - `Double`: maximum value from the original embedding,
+ *   - `List<Int>`: shape metadata (single-element list with the embedding length).
+ *   Returns `null` if `embedding` is empty.
+ * @throws IllegalArgumentException If `bits` is not `8`.
+ */
 private fun quantizeEmbedding(
     embedding: DoubleArray,
     bits: Int = 8,
