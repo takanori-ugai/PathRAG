@@ -1,5 +1,7 @@
 package pathrag.prompt
 
+import dev.langchain4j.model.input.PromptTemplate
+
 /**
  * Prompt templates and symbols used throughout PathRAG.
  */
@@ -38,9 +40,9 @@ You are a helpful assistant responding to questions about data in the tables pro
 Generate a response of the target length and format that responds to the user's question.
 If you don't know the answer, just say so. Do not make anything up.
 ---Target response length and format---
-{response_type}
+{{response_type}}
 ---Data tables---
-{context_data}
+{{context_data}}
 Add sections and commentary to the response as appropriate for the length and format. Style the response in markdown.
 """
 
@@ -52,11 +54,11 @@ You extract concise keywords from user queries.
 ---Goal---
 Return high-level and low-level keywords as JSON arrays.
 ---Language---
-Use {language}.
+Use {{language}}.
 ---Input Query---
-{query}
+{{query}}
 ---Examples---
-{examples}
+{{examples}}
     ---Output Format---
     { "high_level_keywords": [...], "low_level_keywords": [...] }
     Only return JSON.
@@ -67,8 +69,8 @@ Use {language}.
      */
     const val SIMILARITY_CHECK = """Please analyze the similarity between these two questions:
 
-Question 1: {original_prompt}
-Question 2: {cached_prompt}
+Question 1: {{original_prompt}}
+Question 2: {{cached_prompt}}
 
 Please provide a similarity score between 0 and 1 directly:
 1. Whether these two questions are semantically similar
@@ -89,6 +91,14 @@ Rules:
 - Respond with ONLY JSON, no extra text.
 
 Text:
-{text}
+{{text}}
 """
+
+    /**
+     * Render a prompt template using LangChain4j templating rules.
+     */
+    fun render(
+        template: String,
+        variables: Map<String, Any?>,
+    ): String = PromptTemplate.from(template).apply(variables).text()
 }

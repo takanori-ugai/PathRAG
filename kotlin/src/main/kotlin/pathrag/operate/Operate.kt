@@ -122,7 +122,11 @@ suspend fun extractEntities(
     for ((chunkId, chunk) in chunks) {
         val content = chunk["content"]?.toString().orEmpty()
         if (content.isBlank()) continue
-        val prompt = Prompts.ENTITY_REL_JSON.replace("{text}", content)
+        val prompt =
+            Prompts.render(
+                Prompts.ENTITY_REL_JSON,
+                mapOf("text" to content),
+            )
         val maxTokensForExtraction = (globalConfig["max_tokens_for_extraction"] as? Int) ?: 2048
         val response = llm(prompt, null, emptyList(), false, false, maxTokensForExtraction, null)
         val payload =
@@ -352,7 +356,8 @@ private suspend fun runLocalMode(
     if (queryParam.onlyNeedContext) return context
 
     val sysPrompt =
-        Prompts.RAG_RESPONSE.format(
+        Prompts.render(
+            Prompts.RAG_RESPONSE,
             mapOf(
                 "context_data" to context,
                 "response_type" to queryParam.responseType,
@@ -368,14 +373,6 @@ private suspend fun runLocalMode(
         queryParam.maxTokenForTextUnit,
         null,
     )
-}
-
-private fun String.format(values: Map<String, String>): String {
-    val placeholder = Regex("\\{([A-Za-z0-9_]+)}")
-    return placeholder.replace(this) { match ->
-        val key = match.groupValues.getOrNull(1)
-        values[key] ?: match.value
-    }
 }
 
 private suspend fun getNodeData(
@@ -732,7 +729,8 @@ private suspend fun runGlobalMode(
     if (queryParam.onlyNeedContext) return context
 
     val sysPrompt =
-        Prompts.RAG_RESPONSE.format(
+        Prompts.render(
+            Prompts.RAG_RESPONSE,
             mapOf(
                 "context_data" to context,
                 "response_type" to queryParam.responseType,
@@ -809,7 +807,8 @@ private suspend fun runHybridMode(
     if (queryParam.onlyNeedContext) return mergedContext
 
     val sysPrompt =
-        Prompts.RAG_RESPONSE.format(
+        Prompts.render(
+            Prompts.RAG_RESPONSE,
             mapOf(
                 "context_data" to mergedContext,
                 "response_type" to queryParam.responseType,
@@ -891,7 +890,8 @@ private suspend fun extractKeywords(
     val examples = (globalConfig["keywords_examples"] as? String).orEmpty()
     val language = (globalConfig["language"] as? String) ?: Prompts.DEFAULT_LANGUAGE
     val prompt =
-        Prompts.KEYWORDS_EXTRACTION.format(
+        Prompts.render(
+            Prompts.KEYWORDS_EXTRACTION,
             mapOf(
                 "query" to query,
                 "examples" to examples,

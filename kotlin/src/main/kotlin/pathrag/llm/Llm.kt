@@ -9,6 +9,10 @@ import dev.langchain4j.model.ollama.OllamaEmbeddingModel
 import dev.langchain4j.model.openai.OpenAiChatModel
 import dev.langchain4j.model.openai.OpenAiEmbeddingModel
 import dev.langchain4j.model.output.Response
+import dev.langchain4j.service.AiServices
+import dev.langchain4j.service.SystemMessage
+import dev.langchain4j.service.UserMessage
+import dev.langchain4j.service.V
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -26,9 +30,37 @@ private const val DEFAULT_OLLAMA_EMBED_MODEL = "nomic-embed-text"
 private const val DEFAULT_EMBED_DIM = 1536
 private const val DEFAULT_EMBED_CTX = 8192
 private const val DEFAULT_OLLAMA_EMBED_DIM = 768
+private const val DEFAULT_SYSTEM_PROMPT = "You are a helpful assistant."
 
 private val chatModels = ConcurrentHashMap<String, ChatModel>()
 private val embeddingModels = ConcurrentHashMap<String, EmbeddingModel>()
+private val chatServices = ConcurrentHashMap<String, TemplateChatService>()
+
+private interface TemplateChatService {
+    @SystemMessage("{{systemPrompt}}")
+    @UserMessage("{{history}}{{prompt}}")
+    fun chat(
+        @V("systemPrompt") systemPrompt: String,
+        @V("history") history: String,
+        @V("prompt") prompt: String,
+    ): String
+}
+
+private fun templateClient(
+    key: String,
+    model: ChatModel,
+): TemplateChatService = chatServices.computeIfAbsent(key) { AiServices.create(TemplateChatService::class.java, model) }
+
+private fun buildHistoryBlock(historyMessages: List<Map<String, String>>): String {
+    if (historyMessages.isEmpty()) return ""
+    val joined =
+        historyMessages.joinToString("\n") { msg ->
+            val role = msg["role"] ?: "user"
+            val content = msg["content"] ?: ""
+            "$role: $content"
+        }
+    return "$joined\n"
+}
 
 /**
  * Call the OpenAI chat model with retry/backoff and optional keyword extraction.
@@ -51,8 +83,8 @@ suspend fun openAiComplete(
         return if (keywordExtraction) {
             """{"high_level_keywords": ["${prompt.take(10)}"], "low_level_keywords": ["${prompt.takeLast(10)}"]}"""
         } else {
-            val history = if (historyMessages.isEmpty()) "" else " History size=${historyMessages.size}."
-            "${systemPrompt.orEmpty()} $prompt$history".trim().take(maxTokens ?: 4000)
+            val history = buildHistoryBlock(historyMessages)
+            "${systemPrompt.orEmpty()} $history$prompt".trim().take(maxTokens ?: 4000)
         }
     }
 
@@ -60,8 +92,9 @@ suspend fun openAiComplete(
     val logResponses = System.getenv("OPENAI_LOG_RESPONSES")?.toBoolean() ?: false
     val baseUrl = System.getenv("OPENAI_API_BASE")
     val modelName = model.ifBlank { DEFAULT_CHAT_MODEL }
+    val chatKey = "$modelName|$baseUrl"
     val chatModel: ChatModel =
-        chatModels.computeIfAbsent("$modelName|$baseUrl") {
+        chatModels.computeIfAbsent(chatKey) {
             val builder =
                 OpenAiChatModel
                     .builder()
@@ -73,18 +106,8 @@ suspend fun openAiComplete(
             builder.build()
         }
 
-    val fullPrompt =
-        buildString {
-            if (!systemPrompt.isNullOrBlank()) {
-                appendLine(systemPrompt)
-            }
-            if (historyMessages.isNotEmpty()) {
-                historyMessages.forEach { msg ->
-                    appendLine("${msg["role"] ?: "user"}: ${msg["content"] ?: ""}")
-                }
-            }
-            append(prompt)
-        }
+    val historyBlock = buildHistoryBlock(historyMessages)
+    val systemBlock = systemPrompt?.takeIf { it.isNotBlank() } ?: DEFAULT_SYSTEM_PROMPT
 
     return withContext(Dispatchers.IO) {
         val maxAttempts = (System.getenv("OPENAI_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
@@ -94,7 +117,7 @@ suspend fun openAiComplete(
             retryWithBackoff(
                 maxAttempts,
                 backoffMs,
-                operation = { chatModel.chat(fullPrompt) },
+                operation = { templateClient(chatKey, chatModel).chat(systemBlock, historyBlock, prompt) },
                 onError = { e: RuntimeException, attempt: Int ->
                     lastError = e
                     logger.warn(e) { "OpenAI chat attempt ${attempt + 1} failed for model $modelName" }
@@ -124,8 +147,9 @@ suspend fun ollamaComplete(
 ): String {
     val baseUrl = System.getenv("OLLAMA_BASE_URL") ?: System.getenv("OLLAMA_HOST") ?: "http://localhost:11434"
     val modelName = model.ifBlank { System.getenv("OLLAMA_MODEL") ?: DEFAULT_OLLAMA_MODEL }
+    val chatKey = "ollama|$modelName|$baseUrl"
     val chatModel: ChatModel =
-        chatModels.computeIfAbsent("ollama|$modelName|$baseUrl") {
+        chatModels.computeIfAbsent(chatKey) {
             OllamaChatModel
                 .builder()
                 .baseUrl(baseUrl)
@@ -133,18 +157,8 @@ suspend fun ollamaComplete(
                 .build()
         }
 
-    val fullPrompt =
-        buildString {
-            if (!systemPrompt.isNullOrBlank()) {
-                appendLine(systemPrompt)
-            }
-            if (historyMessages.isNotEmpty()) {
-                historyMessages.forEach { msg ->
-                    appendLine("${msg["role"] ?: "user"}: ${msg["content"] ?: ""}")
-                }
-            }
-            append(prompt)
-        }
+    val historyBlock = buildHistoryBlock(historyMessages)
+    val systemBlock = systemPrompt?.takeIf { it.isNotBlank() } ?: DEFAULT_SYSTEM_PROMPT
 
     return withContext(Dispatchers.IO) {
         val maxAttempts = (System.getenv("OLLAMA_RETRY_ATTEMPTS")?.toIntOrNull() ?: 3).coerceAtLeast(1)
@@ -154,7 +168,7 @@ suspend fun ollamaComplete(
             retryWithBackoff(
                 maxAttempts,
                 backoffMs,
-                operation = { chatModel.chat(fullPrompt) },
+                operation = { templateClient(chatKey, chatModel).chat(systemBlock, historyBlock, prompt) },
                 onError = { e: RuntimeException, attempt: Int ->
                     lastError = e
                     logger.warn(e) { "Ollama chat attempt ${attempt + 1} failed for model $modelName" }
