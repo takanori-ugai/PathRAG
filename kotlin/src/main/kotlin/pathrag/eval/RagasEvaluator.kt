@@ -88,6 +88,7 @@ class RagasEvaluator(
                         .filter { it.isNotBlank() }
                         .forEach { collected.add(it) }
                 }
+
                 contextIdx != -1 -> {
                     rows
                         .drop(1)
@@ -96,6 +97,7 @@ class RagasEvaluator(
                         .filter { it.isNotBlank() }
                         .forEach { collected.add(it) }
                 }
+
                 else -> {
                     rows
                         .drop(1)
@@ -146,12 +148,18 @@ class RagasEvaluator(
                 }
             } else {
                 when (ch) {
-                    '"' -> inQuotes = true
+                    '"' -> {
+                        inQuotes = true
+                    }
+
                     ',' -> {
                         result.add(current.toString())
                         current.setLength(0)
                     }
-                    else -> current.append(ch)
+
+                    else -> {
+                        current.append(ch)
+                    }
                 }
             }
             i++
