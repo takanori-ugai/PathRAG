@@ -31,6 +31,7 @@ object Tokenizer {
      * @param content The text to encode into tokens.
      * @param model The model name whose encoding should be used; defaults to "gpt-4o-mini".
      * @return A list of token IDs representing the encoded `content`.
+     */
     fun encode(
         content: String,
         model: String = "gpt-4o-mini",

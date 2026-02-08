@@ -4,21 +4,14 @@ import kotlinx.coroutines.runBlocking
 import java.nio.file.Paths
 
 /**
- * Minimal sample showing how to use the Kotlin PathRAG port.
+ * Demonstrates a minimal PathRAG run: loads environment settings, initializes a PathRAG instance,
+ * seeds it with example Dickens passages, and performs local, global, and hybrid queries printing each result.
  *
- * It mirrors the flow of the provided snippet: set up the working data,
- * insert some text, and execute a query. Replace the sample text/query
- * with your own data as needed.
+ * The function loads configuration from "../.env", applies defaults for KV, vector, and graph storages when unset,
+ * configures chunking, language, keyword and addon parameters, inserts three demo documents, then queries
+ * the RAG with the question "What themes does Dickens explore?" in three modes and prints the answers.
  */
-/**
-     * Demonstrates a sample run of PathRAG: loads environment settings, initializes a PathRAG instance,
-     * seeds it with example Dickens passages, and performs local, global, and hybrid queries printing each result.
-     *
-     * The function loads configuration from "../.env", applies defaults for KV, vector, and graph storages when unset,
-     * configures chunking, language, keyword and addon parameters, inserts three demo documents, then queries
-     * the RAG with the question "What themes does Dickens explore?" in three modes and prints the answers.
-     */
-    fun main() =
+fun main() =
     runBlocking {
         val env = EnvironmentConfig.load(Paths.get("../.env"))
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"

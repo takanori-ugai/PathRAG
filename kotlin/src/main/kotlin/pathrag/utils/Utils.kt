@@ -10,6 +10,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import pathrag.prompt.Prompts
 import java.io.File
 import java.math.BigInteger
 import java.security.MessageDigest
@@ -113,12 +114,12 @@ fun computeMdHashId(
 }
 
 /**
-     * Produce a higher-order wrapper that enforces a maximum number of concurrent invocations for a suspending no-argument function.
-     *
-     * @param maxSize The maximum number of concurrent executions allowed.
-     * @param waitingTimeMillis Reserved for a wait/backoff duration in milliseconds (currently not used by the implementation).
-     * @return A function that accepts a suspending no-argument function and returns a suspending function which enforces the specified concurrency limit when invoked.
-     */
+ * Produce a higher-order wrapper that enforces a maximum number of concurrent invocations for a suspending no-argument function.
+ *
+ * @param maxSize The maximum number of concurrent executions allowed.
+ * @param waitingTimeMillis Reserved for a wait/backoff duration in milliseconds (currently not used by the implementation).
+ * @return A function that accepts a suspending no-argument function and returns a suspending function which enforces the specified concurrency limit when invoked.
+ */
 fun limitAsyncFuncCall(
     maxSize: Int,
     waitingTimeMillis: Long = 1,
@@ -323,11 +324,21 @@ class ResponseCache(
             if (useLlmCheck && llmFunc != null) {
                 val promptTemplate =
                     (globalConfig["similarity_check_prompt"] as? String)
-                        ?: pathrag.prompt.Prompts.SIMILARITY_CHECK
+                        ?: Prompts.SIMILARITY_CHECK
                 val promptCheck =
-                    promptTemplate
-                        .replace("{original_prompt}", prompt)
-                        .replace("{cached_prompt}", best.prompt)
+                    runCatching {
+                        Prompts.render(
+                            promptTemplate,
+                            mapOf(
+                                "original_prompt" to prompt,
+                                "cached_prompt" to best.prompt,
+                            ),
+                        )
+                    }.getOrElse {
+                        promptTemplate
+                            .replace("{original_prompt}", prompt)
+                            .replace("{cached_prompt}", best.prompt)
+                    }
                 val llmScore =
                     runCatching { llmFunc(promptCheck, null, emptyList(), false, false, 32, null).trim() }
                         .getOrNull()

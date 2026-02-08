@@ -172,13 +172,13 @@ class PathRAG(
     )
 
     /**
-         * Create a key-value storage instance for the given namespace using the configured KV backend.
-         *
-         * @param namespace Namespace identifier used to scope stored entries.
-         * @return A configured `BaseKVStorage<Map<String, Any>>` for storing document maps.
-         * @throws IllegalStateException If the configured KV backend (`kvStorage`) is unknown.
-         */
-        private fun createKvStorage(namespace: String): BaseKVStorage<Map<String, Any>> =
+     * Create a key-value storage instance for the given namespace using the configured KV backend.
+     *
+     * @param namespace Namespace identifier used to scope stored entries.
+     * @return A configured `BaseKVStorage<Map<String, Any>>` for storing document maps.
+     * @throws IllegalStateException If the configured KV backend (`kvStorage`) is unknown.
+     */
+    private fun createKvStorage(namespace: String): BaseKVStorage<Map<String, Any>> =
         when (kvStorage) {
             "JsonKVStorage" -> JsonKVStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jKVStorage" -> Neo4jKVStorage(namespace, globalConfig())
@@ -187,13 +187,13 @@ class PathRAG(
         }
 
     /**
-         * Selects and creates a vector storage implementation for the provided namespace using the configured backend.
-         *
-         * @param namespace The namespace used to scope the vector storage (e.g., a logical database/collection prefix).
-         * @return A configured `BaseVectorStorage` implementation for the given namespace.
-         * @throws IllegalStateException If `vectorStorage` is not a recognized backend.
-         */
-        private fun createVectorStorage(namespace: String): BaseVectorStorage =
+     * Selects and creates a vector storage implementation for the provided namespace using the configured backend.
+     *
+     * @param namespace The namespace used to scope the vector storage (e.g., a logical database/collection prefix).
+     * @return A configured `BaseVectorStorage` implementation for the given namespace.
+     * @throws IllegalStateException If `vectorStorage` is not a recognized backend.
+     */
+    private fun createVectorStorage(namespace: String): BaseVectorStorage =
         when (vectorStorage) {
             "NanoVectorDBStorage" -> NanoVectorDBStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jVectorStorage" -> Neo4jVectorStorage(namespace, globalConfig(), embeddingFunc)
@@ -202,13 +202,13 @@ class PathRAG(
         }
 
     /**
-         * Selects and constructs a graph storage implementation according to the configured `graphStorage` type.
-         *
-         * @param namespace Namespace/prefix used to initialize the selected graph storage.
-         * @return An instance of `BaseGraphStorage` corresponding to the configured storage type.
-         * @throws IllegalStateException If `graphStorage` is not a recognized storage identifier.
-         */
-        private fun createGraphStorage(namespace: String): BaseGraphStorage =
+     * Selects and constructs a graph storage implementation according to the configured `graphStorage` type.
+     *
+     * @param namespace Namespace/prefix used to initialize the selected graph storage.
+     * @return An instance of `BaseGraphStorage` corresponding to the configured storage type.
+     * @throws IllegalStateException If `graphStorage` is not a recognized storage identifier.
+     */
+    private fun createGraphStorage(namespace: String): BaseGraphStorage =
         when (graphStorage) {
             "NetworkXStorage" -> NetworkXStorage(namespace, globalConfig(), embeddingFunc)
             "Neo4jStorage" -> Neo4jStorage(namespace, globalConfig())
@@ -224,23 +224,23 @@ class PathRAG(
     private val chunksVdb: BaseVectorStorage = createVectorStorage("chunks_vdb")
 
     /**
- * Compose the runtime global configuration by merging the stored snapshot with additional configuration.
- *
- * The returned map contains the snapshot's keys combined with entries from `extraConfig`; keys present
- * in `extraConfig` override those from the snapshot.
- *
- * @return A map of configuration keys to values representing the merged global configuration.
- */
-private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extraConfig.toMap())
+     * Compose the runtime global configuration by merging the stored snapshot with additional configuration.
+     *
+     * The returned map contains the snapshot's keys combined with entries from `extraConfig`; keys present
+     * in `extraConfig` override those from the snapshot.
+     *
+     * @return A map of configuration keys to values representing the merged global configuration.
+     */
+    private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extraConfig.toMap())
 
     /**
- * Insert one or more documents into the store synchronously.
- *
- * The `stringOrStrings` argument may be a single document `String` or a collection of `String`s;
- * the input is normalized to one or more document texts and ingested into the system.
- *
- * @param stringOrStrings A single document string or a collection of document strings to insert.
- */
+     * Insert one or more documents into the store synchronously.
+     *
+     * The `stringOrStrings` argument may be a single document `String` or a collection of `String`s;
+     * the input is normalized to one or more document texts and ingested into the system.
+     *
+     * @param stringOrStrings A single document string or a collection of document strings to insert.
+     */
     fun insert(stringOrStrings: Any) = runBlockingMaybe { ainsert(stringOrStrings) }
 
     /**
@@ -307,10 +307,10 @@ private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extra
     }
 
     /**
- * Insert a pre-built custom knowledge graph payload into the PathRAG storages synchronously.
- *
- * @param customKg The payload containing chunks, entities, and relationships to upsert.
- */
+     * Insert a pre-built custom knowledge graph payload into the PathRAG storages synchronously.
+     *
+     * @param customKg The payload containing chunks, entities, and relationships to upsert.
+     */
     fun insertCustomKg(customKg: CustomKgPayload) = runBlockingMaybe { ainsertCustomKg(customKg) }
 
     /**
@@ -471,12 +471,12 @@ private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extra
     }
 
     /**
-         * Run a retrieval-augmented generation (RAG) query and return the model's response.
-         *
-         * @param query The user query or prompt text to execute against the knowledge graph and LLM.
-         * @param param Additional query options (e.g., retrieval limits, filters, or response formatting).
-         * @return The generated response text for the given query.
-         */
+     * Run a retrieval-augmented generation (RAG) query and return the model's response.
+     *
+     * @param query The user query or prompt text to execute against the knowledge graph and LLM.
+     * @param param Additional query options (e.g., retrieval limits, filters, or response formatting).
+     * @return The generated response text for the given query.
+     */
     fun query(
         query: String,
         param: QueryParam = QueryParam(),
@@ -512,10 +512,10 @@ private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extra
     }
 
     /**
- * Delete the entity with the given name and all of its relationships synchronously.
- *
- * @param entityName The name or identifier of the entity to delete; comparison is case-insensitive and the name is normalized to uppercase.
- */
+     * Delete the entity with the given name and all of its relationships synchronously.
+     *
+     * @param entityName The name or identifier of the entity to delete; comparison is case-insensitive and the name is normalized to uppercase.
+     */
     fun deleteByEntity(entityName: String) = runBlockingMaybe { adeleteByEntity(entityName) }
 
     /**
@@ -569,10 +569,10 @@ private fun globalConfig(): Map<String, Any?> = globalConfigSnapshot.toMap(extra
     }
 
     /**
- * Remove dangling edges and isolated nodes from the graph and corresponding vector stores.
- *
- * @return A map containing removal counts: `"removed_edges"` -> number of edges removed, `"removed_nodes"` -> number of nodes removed.
- */
+     * Remove dangling edges and isolated nodes from the graph and corresponding vector stores.
+     *
+     * @return A map containing removal counts: `"removed_edges"` -> number of edges removed, `"removed_nodes"` -> number of nodes removed.
+     */
     fun cleanupGraph(): Map<String, Int> = runBlockingMaybe { acleanupGraph() }
 
     /**

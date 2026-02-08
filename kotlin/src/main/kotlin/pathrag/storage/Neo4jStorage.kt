@@ -55,20 +55,20 @@ class Neo4jStorage(
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeRead { tx -> block(tx) } } }
 
     /**
-         * Execute a block within a Neo4j write transaction and return its result.
-         *
-         * @param block Lambda that receives a `TransactionContext` and produces a result of type `T`. It is executed inside a write transaction.
-         * @return The value produced by the provided `block`.
-         */
-        private suspend fun <T> write(block: (TransactionContext) -> T): T =
+     * Execute a block within a Neo4j write transaction and return its result.
+     *
+     * @param block Lambda that receives a `TransactionContext` and produces a result of type `T`. It is executed inside a write transaction.
+     * @return The value produced by the provided `block`.
+     */
+    private suspend fun <T> write(block: (TransactionContext) -> T): T =
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
     /**
-         * Determine whether a node with the given id exists in the storage.
-         *
-         * @param nodeId The node identifier to look up.
-         * @return `true` if a node with the given id exists, `false` otherwise.
-         */
+     * Determine whether a node with the given id exists in the storage.
+     *
+     * @param nodeId The node identifier to look up.
+     * @return `true` if a node with the given id exists, `false` otherwise.
+     */
     override suspend fun hasNode(nodeId: String): Boolean =
         read { tx ->
             tx
@@ -79,12 +79,12 @@ class Neo4jStorage(
         }
 
     /**
-         * Determine whether an edge exists from the source node to the target node.
-         *
-         * @param sourceNodeId The id of the source node.
-         * @param targetNodeId The id of the target node.
-         * @return `true` if an edge exists from `sourceNodeId` to `targetNodeId`, `false` otherwise.
-         */
+     * Determine whether an edge exists from the source node to the target node.
+     *
+     * @param sourceNodeId The id of the source node.
+     * @param targetNodeId The id of the target node.
+     * @return `true` if an edge exists from `sourceNodeId` to `targetNodeId`, `false` otherwise.
+     */
     override suspend fun hasEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -98,11 +98,11 @@ class Neo4jStorage(
         }
 
     /**
-         * Get the degree (number of incident relationships) of the node with the given id.
-         *
-         * @param nodeId The node's identifier.
-         * @return The node's degree as an Int, or 0 if the node does not exist.
-         */
+     * Get the degree (number of incident relationships) of the node with the given id.
+     *
+     * @param nodeId The node's identifier.
+     * @return The node's degree as an Int, or 0 if the node does not exist.
+     */
     override suspend fun nodeDegree(nodeId: String): Int =
         read { tx ->
             tx
@@ -128,10 +128,10 @@ class Neo4jStorage(
     ): Int = if (hasEdge(srcId, tgtId)) 1 else 0
 
     /**
-         * Retrieve properties for a node by its id.
-         *
-         * @return A map of the node's properties keyed by property name, or `null` if no node with the given id exists.
-         */
+     * Retrieve properties for a node by its id.
+     *
+     * @return A map of the node's properties keyed by property name, or `null` if no node with the given id exists.
+     */
     override suspend fun getNode(nodeId: String): Map<String, Any?>? =
         read { tx ->
             tx
@@ -145,12 +145,12 @@ class Neo4jStorage(
         }
 
     /**
-         * Retrieve the properties of the relationship from the source node to the target node.
-         *
-         * @param sourceNodeId The id of the source node.
-         * @param targetNodeId The id of the target node.
-         * @return A map of relationship properties keyed by property name, or `null` if no such relationship exists.
-         */
+     * Retrieve the properties of the relationship from the source node to the target node.
+     *
+     * @param sourceNodeId The id of the source node.
+     * @param targetNodeId The id of the target node.
+     * @return A map of relationship properties keyed by property name, or `null` if no such relationship exists.
+     */
     override suspend fun getEdge(
         sourceNodeId: String,
         targetNodeId: String,
@@ -167,11 +167,11 @@ class Neo4jStorage(
         }
 
     /**
-         * Retrieve all edges incident to the specified node.
-         *
-         * @param sourceNodeId The node identifier to find incident edges for.
-         * @return A list of pairs (sourceId, targetId) for each edge where the specified node is either the source or the target.
-         */
+     * Retrieve all edges incident to the specified node.
+     *
+     * @param sourceNodeId The node identifier to find incident edges for.
+     * @return A list of pairs (sourceId, targetId) for each edge where the specified node is either the source or the target.
+     */
     override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -184,11 +184,11 @@ class Neo4jStorage(
         }
 
     /**
-         * Retrieve all incoming edges to the specified node.
-         *
-         * @param nodeId The identifier of the target node whose incoming edges are fetched.
-         * @return A list of pairs `(src, tgt)` where `src` is the source node id and `tgt` is the target node id (equal to `nodeId`) for each incoming edge.
-         */
+     * Retrieve all incoming edges to the specified node.
+     *
+     * @param nodeId The identifier of the target node whose incoming edges are fetched.
+     * @return A list of pairs `(src, tgt)` where `src` is the source node id and `tgt` is the target node id (equal to `nodeId`) for each incoming edge.
+     */
     override suspend fun getNodeInEdges(nodeId: String): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -199,11 +199,11 @@ class Neo4jStorage(
         }
 
     /**
-         * Fetches outgoing edges from the node identified by the given id as a list of (sourceId, targetId) pairs.
-         *
-         * @param nodeId The node identifier to fetch outgoing edges for.
-         * @return A list of pairs where each pair is the source node id and the target node id for an outgoing edge.
-         */
+     * Fetches outgoing edges from the node identified by the given id as a list of (sourceId, targetId) pairs.
+     *
+     * @param nodeId The node identifier to fetch outgoing edges for.
+     * @return A list of pairs where each pair is the source node id and the target node id for an outgoing edge.
+     */
     override suspend fun getNodeOutEdges(nodeId: String): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -290,18 +290,18 @@ class Neo4jStorage(
     }
 
     /**
-         * Retrieve all node ids for this storage namespace.
-         *
-         * @return A list of node id strings; an empty list if no nodes exist.
-         */
+     * Retrieve all node ids for this storage namespace.
+     *
+     * @return A list of node id strings; an empty list if no nodes exist.
+     */
     override suspend fun nodes(): List<String> =
         read { tx -> tx.run("MATCH (n:$nodeLabel) RETURN n.id AS id").list { it.get("id").asString() } }
 
     /**
-         * Retrieve all directed edges as (sourceId, targetId) pairs.
-         *
-         * @return A list of pairs where the first element is the source node id and the second element is the target node id.
-         */
+     * Retrieve all directed edges as (sourceId, targetId) pairs.
+     *
+     * @return A list of pairs where the first element is the source node id and the second element is the target node id.
+     */
     override suspend fun edges(): List<Pair<String, String>> =
         read { tx ->
             tx
@@ -352,12 +352,12 @@ class Neo4jStorage(
     }
 
     /**
-         * Compute node embeddings using Neo4j GDS node2vec, falling back to a PageRank/degree-based embedding if node2vec is not available or fails.
-         *
-         * @param dim The embedding dimensionality to request from node2vec.
-         * @return A pair where the first element is a flattened DoubleArray containing the concatenated embedding vectors (ordered by node) and the second element is a List of node ids (as strings) in the same order as the embeddings. The flattened array length will be `labels.size * dim` when node2vec succeeds; fallback embeddings use a 2-dimensional scheme per node.
-         */
-        @Suppress("TooGenericExceptionCaught")
+     * Compute node embeddings using Neo4j GDS node2vec, falling back to a PageRank/degree-based embedding if node2vec is not available or fails.
+     *
+     * @param dim The embedding dimensionality to request from node2vec.
+     * @return A pair where the first element is a flattened DoubleArray containing the concatenated embedding vectors (ordered by node) and the second element is a List of node ids (as strings) in the same order as the embeddings. The flattened array length will be `labels.size * dim` when node2vec succeeds; fallback embeddings use a 2-dimensional scheme per node.
+     */
+    @Suppress("TooGenericExceptionCaught")
     private suspend fun runNode2VecGds(dim: Int): Pair<DoubleArray, List<String>> =
         withContext(Dispatchers.IO) {
             val labels = mutableListOf<String>()
