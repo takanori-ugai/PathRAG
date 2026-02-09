@@ -165,7 +165,7 @@ fun main(args: Array<String>) =
         }
     }
 
-private fun processSample(
+private suspend fun processSample(
     index: Int,
     line: String,
     json: Json,
@@ -192,12 +192,12 @@ private fun processSample(
         rag.insert(paragraphs)
 
         val queryAnswer =
-            rag.query(
+            rag.aquery(
                 "Answer in one or few words, no extra information: ${sample.question}",
                 param = QueryParam(mode = "hybrid"),
             )
         val context =
-            rag.query(
+            rag.aquery(
                 "Answer in one or few words, no extra information: ${sample.question}",
                 param = QueryParam(mode = "hybrid", onlyNeedContext = true),
             )
