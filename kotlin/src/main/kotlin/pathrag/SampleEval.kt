@@ -81,7 +81,9 @@ fun main() =
             println(
                 "Sample ${idx + 1}: answerRelevancy=${score.answerRelevancy} " +
                     "contextRecall=${score.contextRecall} contextPrecision=${score.contextPrecision} " +
-                    "faithfulness=${score.faithfulness} answerCorrectness=${score.answerCorrectness}",
+                    "faithfulness=${score.faithfulness} answerCorrectness=${score.answerCorrectness} " +
+                    "answerPrecision=${score.answerPrecision} answerRecall=${score.answerRecall} " +
+                    "answerF1=${score.answerF1}",
             )
         }
     }

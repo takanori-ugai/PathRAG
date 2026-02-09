@@ -6,6 +6,9 @@ data class RagasScores(
     val contextPrecision: Double,
     val faithfulness: Double,
     val answerCorrectness: Double?,
+    val answerPrecision: Double?,
+    val answerRecall: Double?,
+    val answerF1: Double?,
 )
 
 class RagasMetrics(
@@ -27,6 +30,26 @@ class RagasMetrics(
             } else {
                 maxSimilarity(answerTokens, gtTokens)
             }
+        val answerTokenSet = answerTokens
+        val gtTokenSet = gtTokens.fold(emptySet<String>()) { acc, tokens -> acc + tokens }
+        val answerPrecision =
+            if (gtTokenSet.isEmpty()) {
+                null
+            } else {
+                precision(answerTokenSet, gtTokenSet)
+            }
+        val answerRecall =
+            if (gtTokenSet.isEmpty()) {
+                null
+            } else {
+                recall(answerTokenSet, gtTokenSet)
+            }
+        val answerF1 =
+            if (answerPrecision == null || answerRecall == null) {
+                null
+            } else {
+                f1(answerPrecision, answerRecall)
+            }
 
         return RagasScores(
             answerRelevancy = answerRelevancy,
@@ -34,6 +57,9 @@ class RagasMetrics(
             contextPrecision = contextPrecision,
             faithfulness = faithfulness,
             answerCorrectness = answerCorrectness,
+            answerPrecision = answerPrecision,
+            answerRecall = answerRecall,
+            answerF1 = answerF1,
         )
     }
 
@@ -69,6 +95,32 @@ class RagasMetrics(
         val intersection = a.intersect(b).size.toDouble()
         val union = (a.size + b.size - intersection).toDouble()
         return if (union == 0.0) 0.0 else intersection / union
+    }
+
+    private fun precision(
+        answer: Set<String>,
+        groundTruth: Set<String>,
+    ): Double {
+        if (answer.isEmpty()) return 0.0
+        val intersection = answer.intersect(groundTruth).size.toDouble()
+        return intersection / answer.size.toDouble()
+    }
+
+    private fun recall(
+        answer: Set<String>,
+        groundTruth: Set<String>,
+    ): Double {
+        if (groundTruth.isEmpty()) return 0.0
+        val intersection = answer.intersect(groundTruth).size.toDouble()
+        return intersection / groundTruth.size.toDouble()
+    }
+
+    private fun f1(
+        precision: Double,
+        recall: Double,
+    ): Double {
+        if (precision == 0.0 && recall == 0.0) return 0.0
+        return 2.0 * precision * recall / (precision + recall)
     }
 
     private fun tokenize(text: String): Set<String> =

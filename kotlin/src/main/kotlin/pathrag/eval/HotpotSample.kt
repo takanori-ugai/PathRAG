@@ -36,8 +36,12 @@ data class HotpotDecomposition(
 )
 
 fun main() {
-    val inputPath = java.nio.file.Path.of("data/data/q1.json")
-    val payload = java.nio.file.Files.readString(inputPath)
+    val inputPath =
+        java.nio.file.Path
+            .of("data/data/q1.json")
+    val payload =
+        java.nio.file.Files
+            .readString(inputPath)
     val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
     val sample: HotpotSample = json.decodeFromString(payload)
     println(sample)
