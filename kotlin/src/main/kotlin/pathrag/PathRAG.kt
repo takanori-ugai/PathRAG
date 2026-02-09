@@ -519,6 +519,23 @@ class PathRAG(
     fun deleteByEntity(entityName: String) = runBlockingMaybe { adeleteByEntity(entityName) }
 
     /**
+     * Drop all namespaces and clear stored data for this PathRAG instance.
+     */
+    fun clear() = runBlockingMaybe { aclear() }
+
+    /**
+     * Drop all namespaces and clear stored data for this PathRAG instance.
+     */
+    suspend fun aclear() {
+        fullDocs.drop()
+        textChunks.drop()
+        chunkEntityRelationGraph.drop()
+        entitiesVdb.drop()
+        relationshipsVdb.drop()
+        chunksVdb.drop()
+    }
+
+    /**
      * Remove the named entity and all its relationships from the graph and associated vector stores.
      *
      * The provided `entityName` is normalized by trimming surrounding double quotes and uppercasing before deletion.

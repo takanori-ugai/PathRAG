@@ -285,8 +285,8 @@ suspend fun kgQuery(
     hashingKv: ResponseCache? = null,
 ): String =
     withContext(Dispatchers.Default) {
-        val argsHash = computeArgsHash(queryParam.mode, query)
-        val cached = hashingKv?.handleCache(argsHash, query, queryParam.mode)
+        val argsHash = computeArgsHash(queryParam, query)
+        val cached = hashingKv?.handleCache(argsHash, query, queryParam.mode, allowSimilar = false)
         if (cached != null) return@withContext cached
 
         val (llKeywords, hlKeywords) = extractKeywords(llmModel, query, globalConfig)

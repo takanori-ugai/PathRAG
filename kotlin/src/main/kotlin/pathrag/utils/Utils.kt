@@ -273,18 +273,22 @@ class ResponseCache(
      * @param argsHash The deterministic hash of the request arguments used for exact cache lookup.
      * @param prompt The prompt text whose embedding may be used for similarity-based matching.
      * @param mode The cache namespace or mode to search within.
+     * @param allowSimilar When false, disables embedding-similarity cache lookup.
      * @return The cached content when an exact or sufficiently similar entry is found, `null` otherwise.
      */
     suspend fun handleCache(
         argsHash: String,
         prompt: String,
         mode: String,
+        allowSimilar: Boolean = true,
     ): String? {
         val modeCache = store[mode]
         if (modeCache != null) {
             val direct = modeCache[argsHash]
             if (direct != null) return direct.content
         }
+
+        if (!allowSimilar) return null
 
         val embedCfg =
             globalConfig["embedding_cache_config"]?.takeIf { it is Map<*, *> }?.let {

@@ -61,6 +61,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.0")
     implementation("io.github.oshai:kotlin-logging-jvm:5.1.0")
     implementation("com.auth0:java-jwt:4.5.0")
+    implementation("org.apache.commons:commons-csv:1.10.0")
 
     // Koin for Ktor
     implementation("io.insert-koin:koin-ktor:$koinVersion")

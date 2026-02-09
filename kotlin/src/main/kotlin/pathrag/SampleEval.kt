@@ -1,15 +1,14 @@
 package pathrag
 
 import kotlinx.coroutines.runBlocking
+import pathrag.base.AddonParams
+import pathrag.eval.RagasEvaluator
+import pathrag.eval.RagasInput
+import pathrag.eval.RagasMetrics
 import java.nio.file.Paths
 
 /**
- * Demonstrates a minimal PathRAG run: loads environment settings, initializes a PathRAG instance,
- * seeds it with example Dickens passages, and performs local, global, and hybrid queries printing each result.
- *
- * The function loads configuration from "../.env", applies defaults for KV, vector, and graph storages when unset,
- * configures chunking, language, keyword and addon parameters, inserts three demo documents, then queries
- * the RAG with the question "What themes does Dickens explore?" in three modes and prints the answers.
+ * Demonstrates generating a RAGAS-compatible JSONL evaluation set from sample content.
  */
 fun main() =
     runBlocking {
@@ -17,6 +16,7 @@ fun main() =
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
         val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
         val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
+
         val rag =
             PathRAG(
                 workingDir = env["WORKING_DIR"] ?: "./sample_cache",
@@ -27,7 +27,6 @@ fun main() =
                 chunkOverlapTokenSize = 120,
                 language = env["LANGUAGE"] ?: "English",
                 keywordExamples = "",
-                // Optional: pin keywords instead of calling the LLM extractor
                 highLevelKeywords = listOf("themes", "Dickens"),
                 lowLevelKeywords = listOf("poverty", "class struggle", "redemption"),
                 similarityCheckPrompt = pathrag.prompt.Prompts.SIMILARITY_CHECK,
@@ -38,14 +37,12 @@ fun main() =
                         "use_llm_check" to false,
                     ),
                 addonParams =
-                    pathrag.base.AddonParams(
+                    AddonParams(
                         entityTypes = listOf("organization", "person", "geo", "event", "category"),
-                        // language is set at top-level already
                         exampleNumber = 3,
                     ),
             )
 
-        // Insert demo content (replace with real documents).
         rag.insert(
             listOf(
                 """
@@ -64,22 +61,29 @@ fun main() =
             ),
         )
 
-        val question = "What themes does Dickens explore?"
+        val inputs =
+            listOf(
+                RagasInput(
+                    question = "What themes does Dickens explore?",
+                    groundTruths = listOf("poverty", "class struggle", "redemption", "morality", "compassion"),
+                    mode = "hybrid",
+                    id = "sample-1",
+                ),
+            )
 
-        // Local mode: entity-centric context only.
-        val localAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "local", onlyNeedContext = true))
-        println("Q (local): $question")
-        println("A: $localAnswer\n")
+        val evaluator = RagasEvaluator(rag)
+        val samples = evaluator.evaluateToJsonl(inputs)
+        val metrics = RagasMetrics()
+        val scores = metrics.scoreAll(samples)
 
-        // Global mode: relationship-centric context.
-        val globalAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "global", onlyNeedContext = true))
-        println("Q (global): $question")
-        println("A: $globalAnswer\n")
-
-        // Hybrid mode: uses existing hybrid flow.
-        val hybridAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid", onlyNeedContext = true))
-        println("Q (hybrid): $question")
-        println("A: $hybridAnswer\n")
-
-        println("\nDone!")
+        println("Wrote ${samples.size} samples to ${RagasEvaluator.DEFAULT_OUTPUT_PATH}")
+        scores.forEachIndexed { idx, score ->
+            println(
+                "Sample ${idx + 1}: answerRelevancy=${score.answerRelevancy} " +
+                    "contextRecall=${score.contextRecall} contextPrecision=${score.contextPrecision} " +
+                    "faithfulness=${score.faithfulness} answerCorrectness=${score.answerCorrectness} " +
+                    "answerPrecision=${score.answerPrecision} answerRecall=${score.answerRecall} " +
+                    "answerF1=${score.answerF1}",
+            )
+        }
     }
