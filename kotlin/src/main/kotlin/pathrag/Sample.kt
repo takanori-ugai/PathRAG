@@ -1,6 +1,16 @@
 package pathrag
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.buildJsonObject
+import java.nio.file.Files
 import java.nio.file.Paths
 
 /**
@@ -17,9 +27,10 @@ fun main() =
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
         val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
         val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
+        val workingDir = env["WORKING_DIR"] ?: "./sample_cache"
         val rag =
             PathRAG(
-                workingDir = env["WORKING_DIR"] ?: "./sample_cache",
+                workingDir = workingDir,
                 kvStorage = kvStorage,
                 vectorStorage = vectorStorage,
                 graphStorage = graphStorage,
@@ -28,8 +39,8 @@ fun main() =
                 language = env["LANGUAGE"] ?: "English",
                 keywordExamples = "",
                 // Optional: pin keywords instead of calling the LLM extractor
-                highLevelKeywords = listOf("themes", "Dickens"),
-                lowLevelKeywords = listOf("poverty", "class struggle", "redemption"),
+                // highLevelKeywords = listOf("themes", "Dickens"),
+                // lowLevelKeywords = listOf("poverty", "class struggle", "redemption"),
                 similarityCheckPrompt = pathrag.prompt.Prompts.SIMILARITY_CHECK,
                 embeddingCacheConfig =
                     mapOf(
@@ -64,6 +75,15 @@ fun main() =
             ),
         )
 
+        val graphSnapshot = snapshotGraphToJson(rag.graph())
+        val graphPath = Paths.get(workingDir, "knowledge-graph.json")
+        Files.createDirectories(graphPath.parent)
+        Files.writeString(
+            graphPath,
+            Json { prettyPrint = true }.encodeToString(graphSnapshot),
+        )
+        println("Knowledge graph saved to: ${graphPath.toAbsolutePath()}")
+
         val question = "What themes does Dickens explore?"
 
         // Local mode: entity-centric context only.
@@ -77,9 +97,74 @@ fun main() =
         println("A: $globalAnswer\n")
 
         // Hybrid mode: uses existing hybrid flow.
-        val hybridAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid", onlyNeedContext = true))
+        val context = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid", onlyNeedContext = true))
+        val hybridAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid", onlyNeedContext = false))
+        println("Context: $context")
         println("Q (hybrid): $question")
         println("A: $hybridAnswer\n")
 
         println("\nDone!")
+    }
+
+@Serializable
+private data class GraphSnapshot(
+    val nodes: List<GraphNode>,
+    val edges: List<GraphEdge>,
+)
+
+@Serializable
+private data class GraphNode(
+    val id: String,
+    val data: JsonObject = JsonObject(emptyMap()),
+)
+
+@Serializable
+private data class GraphEdge(
+    val source: String,
+    val target: String,
+    val data: JsonObject = JsonObject(emptyMap()),
+)
+
+private suspend fun snapshotGraphToJson(graph: pathrag.base.BaseGraphStorage): GraphSnapshot {
+    val nodes =
+        graph.nodes().map { id ->
+            val data = graph.getNode(id)
+            GraphNode(id, toJsonObject(data))
+        }
+    val edges =
+        graph.edges().map { (source, target) ->
+            val data = graph.getEdge(source, target) ?: graph.getEdge(target, source)
+            GraphEdge(source, target, toJsonObject(data))
+        }
+    return GraphSnapshot(nodes, edges)
+}
+
+private fun toJsonObject(data: Map<String, Any?>?): JsonObject =
+    if (data == null) {
+        JsonObject(emptyMap())
+    } else {
+        buildJsonObject {
+            data.forEach { (key, value) ->
+                put(key, toJsonElement(value))
+            }
+        }
+    }
+
+private fun toJsonElement(value: Any?): JsonElement =
+    when (value) {
+        null -> JsonNull
+        is JsonElement -> value
+        is String -> JsonPrimitive(value)
+        is Number -> JsonPrimitive(value)
+        is Boolean -> JsonPrimitive(value)
+        is Map<*, *> ->
+            buildJsonObject {
+                value.forEach { (k, v) ->
+                    if (k != null) {
+                        put(k.toString(), toJsonElement(v))
+                    }
+                }
+            }
+        is List<*> -> JsonArray(value.map { toJsonElement(it) })
+        else -> JsonPrimitive(value.toString())
     }

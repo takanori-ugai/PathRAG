@@ -41,7 +41,9 @@ class PathRAG(
     private val chunkTokenSize: Int = 1200,
     private val chunkOverlapTokenSize: Int = 100,
     private val language: String = System.getenv("LANGUAGE") ?: "English",
-    private val keywordExamples: String = System.getenv("KEYWORDS_EXAMPLES") ?: "",
+    private val keywordExamples: String =
+        (System.getenv("KEYWORDS_EXAMPLES") ?: "")
+            .ifBlank { pathrag.prompt.Prompts.KEYWORDS_EXTRACTION_EXAMPLES.joinToString("\n") },
     private val similarityCheckPrompt: String = System.getenv("SIMILARITY_CHECK_PROMPT") ?: pathrag.prompt.Prompts.SIMILARITY_CHECK,
     private val embeddingCacheConfig: Map<String, Any?> =
         mapOf(
@@ -63,6 +65,7 @@ class PathRAG(
             ?.map { it.trim() }
             ?.filter { it.isNotBlank() }
             ?: emptyList(),
+    private val clearCacheOnStart: Boolean = true,
     private val addonParams: AddonParams =
         AddonParams(
             entityTypes = System.getenv("ENTITY_TYPES")?.split(",")?.map { it.trim() } ?: emptyList(),
@@ -78,6 +81,15 @@ class PathRAG(
             "ollama" -> System.getenv("OLLAMA_MODEL") ?: "llama3"
             else -> System.getenv("OPENAI_MODEL") ?: "gpt-4o-mini"
         }
+
+    private fun clearResponseCacheFile() {
+        if (!clearCacheOnStart) return
+        val cachePath = "$workingDir/llm_cache.json"
+        val cacheFile = java.io.File(cachePath)
+        if (cacheFile.exists()) {
+            cacheFile.delete()
+        }
+    }
 
     private val embeddingFunc = defaultEmbeddingFunc()
     private val llmModelFunc: suspend (String, String?, List<Map<String, String>>, Boolean, Boolean, Int?, Any?) -> String =
@@ -126,7 +138,10 @@ class PathRAG(
             fixedLowLevelKeywords = lowLevelKeywords,
         )
 
-    private val llmResponseCache = ResponseCache(globalConfig())
+    private val llmResponseCache =
+        ResponseCache(
+            globalConfig().also { clearResponseCacheFile() },
+        )
 
     private data class CustomKgEntity(
         val entityName: String,
