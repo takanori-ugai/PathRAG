@@ -4,33 +4,40 @@ import kotlinx.coroutines.runBlocking
 import java.nio.file.Paths
 
 /**
- * Demonstrates a minimal PathRAG run: loads environment settings, initializes a PathRAG instance,
- * seeds it with example Dickens passages, and performs local, global, and hybrid queries printing each result.
+ * Demonstrates PathRAG usage with Neo4j-backed graph storage by loading configuration, creating a PathRAG instance,
+ * inserting sample Dickens-related texts, and performing local, global, and hybrid queries while printing results.
  *
- * The function loads configuration from "../.env", applies defaults for KV, vector, and graph storages when unset,
- * configures chunking, language, keyword and addon parameters, inserts three demo documents, then queries
- * the RAG with the question "What themes does Dickens explore?" in three modes and prints the answers.
+ * Configure Neo4j via env (NEO4J_URI, NEO4J_USER, NEO4J_PASSWORD) and run with
+ * `./gradlew execute -PmainClass=pathrag.SampleNeo4jKt`. The program loads environment variables from ../.env
+ * (with sensible defaults), constructs a typed Neo4j ExtraConfig and AddonParams, configures embedding cache and
+ * tokenization parameters, inserts example documents, and then queries the RAG in three modes ("local", "global",
+ * "hybrid"), printing each question and its answer.
  */
 fun main() =
     runBlocking {
         val env = EnvironmentConfig.load(Paths.get("../.env"))
         val kvStorage = env["KV_STORAGE"] ?: "JsonKVStorage"
         val vectorStorage = env["VECTOR_STORAGE"] ?: "NanoVectorDBStorage"
-        val graphStorage = env["GRAPH_STORAGE"] ?: "NetworkXStorage"
+        val graphStorage = env["GRAPH_STORAGE"] ?: "Neo4jStorage"
+        val neo4jConfig =
+            pathrag.base.ExtraConfig(
+                neo4jUri = env["NEO4J_URI"],
+                neo4jUser = env["NEO4J_USER"],
+                neo4jPassword = env["NEO4J_PASSWORD"],
+            )
         val rag =
             PathRAG(
-                workingDir = env["WORKING_DIR"] ?: "./sample_cache",
+                workingDir = env["WORKING_DIR"] ?: "./sample_cache_neo4j",
                 kvStorage = kvStorage,
                 vectorStorage = vectorStorage,
                 graphStorage = graphStorage,
+                extraConfig = neo4jConfig,
                 chunkTokenSize = 800,
                 chunkOverlapTokenSize = 120,
                 language = env["LANGUAGE"] ?: "English",
-                keywordExamples = "",
-                // Optional: pin keywords instead of calling the LLM extractor
+                // Optional: pin keywords to bypass LLM keyword extraction
                 highLevelKeywords = listOf("themes", "Dickens"),
                 lowLevelKeywords = listOf("poverty", "class struggle", "redemption"),
-                similarityCheckPrompt = pathrag.prompt.Prompts.SIMILARITY_CHECK,
                 embeddingCacheConfig =
                     mapOf(
                         "enabled" to true,
@@ -40,12 +47,10 @@ fun main() =
                 addonParams =
                     pathrag.base.AddonParams(
                         entityTypes = listOf("organization", "person", "geo", "event", "category"),
-                        // language is set at top-level already
                         exampleNumber = 3,
                     ),
             )
 
-        // Insert demo content (replace with real documents).
         rag.insert(
             listOf(
                 """
@@ -66,20 +71,17 @@ fun main() =
 
         val question = "What themes does Dickens explore?"
 
-        // Local mode: entity-centric context only.
-        val localAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "local", onlyNeedContext = true))
+        val localAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "local"))
         println("Q (local): $question")
         println("A: $localAnswer\n")
 
-        // Global mode: relationship-centric context.
-        val globalAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "global", onlyNeedContext = true))
+        val globalAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "global"))
         println("Q (global): $question")
         println("A: $globalAnswer\n")
 
-        // Hybrid mode: uses existing hybrid flow.
-        val hybridAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid", onlyNeedContext = true))
+        val hybridAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid"))
         println("Q (hybrid): $question")
         println("A: $hybridAnswer\n")
 
-        println("\nDone!")
+        println("\nDone with Neo4j-backed graph storage.")
     }

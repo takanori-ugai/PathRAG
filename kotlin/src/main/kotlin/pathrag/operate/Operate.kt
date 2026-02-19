@@ -66,6 +66,18 @@ private data class KeywordPayload(
     @SerialName("low_level_keywords") val lowLevel: List<String> = emptyList(),
 )
 
+/**
+ * Split text into overlapping token-based chunks suitable for token-limited processing.
+ *
+ * @param content The source text to split.
+ * @param overlapTokenSize Number of tokens that each chunk should overlap with the previous chunk.
+ * @param maxTokenSize Maximum number of tokens per chunk; must be greater than `overlapTokenSize`.
+ * @param tiktokenModel Tokenizer model identifier used to encode/decode the text.
+ * @return A list of maps, each containing:
+ *   - "tokens": Int — the token count for the chunk,
+ *   - "content": String — the decoded text of the chunk,
+ *   - "chunk_order_index": Int — the zero-based sequence index of the chunk.
+ */
 fun chunkingByTokenSize(
     content: String,
     overlapTokenSize: Int = 128,
@@ -119,7 +131,11 @@ suspend fun extractEntities(
     for ((chunkId, chunk) in chunks) {
         val content = chunk["content"]?.toString().orEmpty()
         if (content.isBlank()) continue
-        val prompt = Prompts.ENTITY_REL_JSON.replace("{text}", content)
+        val prompt =
+            Prompts.render(
+                Prompts.ENTITY_REL_JSON,
+                mapOf("text" to content),
+            )
         val maxTokensForExtraction = (globalConfig["max_tokens_for_extraction"] as? Int) ?: 2048
         val response = llm(prompt, null, emptyList(), false, false, maxTokensForExtraction, null)
         val payload =
@@ -221,8 +237,34 @@ private fun extractJsonPayload(response: String): String {
     return trimmed
 }
 
-private fun normalizeId(id: String): String = "\"${id.trim('"').uppercase()}\""
+/**
+ * Normalize an identifier by removing surrounding double quotes and converting to uppercase.
+ *
+ * @param id The identifier to normalize; may include surrounding double quotes.
+ * @return The normalized identifier with no surrounding double quotes and in uppercase.
+ */
+private fun normalizeId(id: String): String = id.trim('"').uppercase()
 
+/**
+ * Run a retrieval-augmented generation (RAG) query backed by the knowledge graph using the configured mode.
+ *
+ * Dispatches the query to one of the mode-specific runners ("local", "global", "hybrid"), extracts keywords,
+ * composes the system context, and caches the result when a ResponseCache is provided.
+ *
+ * @param query The user's query text.
+ * @param knowledgeGraphInst Graph storage instance used for node/edge lookups and path computations.
+ * @param entitiesVdb Vector database storing entity embeddings and metadata.
+ * @param relationshipsVdb Vector database storing relationship embeddings and metadata.
+ * @param textChunksDb Key-value storage containing text chunks referenced by source IDs.
+ * @param queryParam Parameters controlling retrieval and response behavior (mode, topK, streaming, etc.).
+ * @param globalConfig Global configuration map used for keyword extraction and other runtime options.
+ * @param llmModel LLM call function used to generate keywords and final responses. It receives prompt, optional system prompt,
+ *                 conversation history, keywordExtraction flag, streaming flag, optional maxTokens, and an optional hashingKv.
+ * @param hashingKv Optional response cache used to read/write cached responses keyed by the query and mode.
+ *
+ * @return The generated response string for the query.
+ * @throws IllegalArgumentException If `queryParam.mode` is not one of "local", "global", or "hybrid".
+ */
 suspend fun kgQuery(
     query: String,
     knowledgeGraphInst: BaseGraphStorage,
@@ -243,8 +285,8 @@ suspend fun kgQuery(
     hashingKv: ResponseCache? = null,
 ): String =
     withContext(Dispatchers.Default) {
-        val argsHash = computeArgsHash(queryParam.mode, query)
-        val cached = hashingKv?.handleCache(argsHash, query, queryParam.mode)
+        val argsHash = computeArgsHash(queryParam, query)
+        val cached = hashingKv?.handleCache(argsHash, query, queryParam.mode, allowSimilar = false)
         if (cached != null) return@withContext cached
 
         val (llKeywords, hlKeywords) = extractKeywords(llmModel, query, globalConfig)
@@ -293,7 +335,7 @@ suspend fun kgQuery(
                 }
 
                 else -> {
-                    "Unknown mode ${queryParam.mode}"
+                    throw IllegalArgumentException("Unknown query mode: ${queryParam.mode}. Supported modes: local, global, hybrid")
                 }
             }
         hashingKv?.upsert(queryParam.mode, argsHash, response, query)
@@ -346,7 +388,8 @@ private suspend fun runLocalMode(
     if (queryParam.onlyNeedContext) return context
 
     val sysPrompt =
-        Prompts.RAG_RESPONSE.format(
+        Prompts.render(
+            Prompts.RAG_RESPONSE,
             mapOf(
                 "context_data" to context,
                 "response_type" to queryParam.responseType,
@@ -364,14 +407,6 @@ private suspend fun runLocalMode(
     )
 }
 
-private fun String.format(values: Map<String, String>): String {
-    val placeholder = Regex("\\{([A-Za-z0-9_]+)}")
-    return placeholder.replace(this) { match ->
-        val key = match.groupValues.getOrNull(1)
-        values[key] ?: match.value
-    }
-}
-
 private suspend fun getNodeData(
     keywords: String,
     knowledgeGraphInst: BaseGraphStorage,
@@ -383,7 +418,7 @@ private suspend fun getNodeData(
     if (results.isEmpty()) {
         return Triple(
             emptyCsv(listOf("id", "entity", "type", "description", "rank")),
-            emptyCsv(listOf("id", "context")),
+            emptyCsv(listOf("context")),
             emptyCsv(listOf("id", "content")),
         )
     }
@@ -425,8 +460,8 @@ private suspend fun getNodeData(
         )
     val relationsCsv =
         toCsv(
-            listOf("id", "context"),
-            relations.mapIndexed { idx, r -> listOf(idx.toString(), r) },
+            listOf("context"),
+            relations.map { listOf(it) },
         )
     val textCsv =
         toCsv(
@@ -467,144 +502,223 @@ private suspend fun buildPathRelations(
     val targetNodes = nodeDatas.mapNotNull { it["entity_name"]?.toString() }.distinct()
     if (targetNodes.size < 2) return emptyList()
 
-    val paths = findPathsBetweenTargets(knowledgeGraphInst, targetNodes, maxDepth = 3)
-    val weightedPaths = scorePaths(paths, knowledgeGraphInst).take(15)
-    val selectedPaths = weightedPaths.map { it.first }
-    if (paths.isEmpty()) return emptyList()
-
-    val nodesCache = mutableMapOf<String, Map<String, Any?>>()
-    val allPathNodes = selectedPaths.flatten().toSet()
-    for (name in allPathNodes) {
-        nodesCache[name] = knowledgeGraphInst.getNode(name) ?: emptyMap()
-    }
-
-    suspend fun describePath(path: List<String>): String {
-        val pieces = mutableListOf<String>()
-        for ((idx, nodeId) in path.withIndex()) {
-            val node = nodesCache[nodeId] ?: emptyMap()
-            val nodeType = node["entity_type"] ?: "UNKNOWN"
-            val nodeDesc = node["description"] ?: ""
-            pieces.add("Entity $nodeId ($nodeType): $nodeDesc")
-            if (idx < path.lastIndex) {
-                val next = path[idx + 1]
-                val edgeData =
-                    knowledgeGraphInst.getEdge(nodeId, next) ?: knowledgeGraphInst.getEdge(next, nodeId)
-                val edgeKeywords = edgeData?.get("keywords") ?: ""
-                val edgeDesc = edgeData?.get("description") ?: ""
-                pieces.add("Edge [$nodeId -> $next]: keywords=($edgeKeywords), desc=($edgeDesc)")
-            }
-        }
-        return pieces.joinToString(" | ")
-    }
-
-    val described = mutableListOf<String>()
-    for (path in selectedPaths.sortedBy { it.size }) {
-        described.add(describePath(path))
-    }
-
-    return truncateByToken(described.map { mapOf("content" to it) }, queryParam.maxTokenForLocalContext)
-        .map { it["content"].toString() }
-}
-
-private suspend fun findPathsBetweenTargets(
-    knowledgeGraphInst: BaseGraphStorage,
-    targets: List<String>,
-    maxDepth: Int = 3,
-): List<List<String>> {
+    val edgesList = knowledgeGraphInst.edges()
     val adjacency = mutableMapOf<String, MutableSet<String>>()
-    knowledgeGraphInst.edges().forEach { (u, v) ->
+    edgesList.forEach { (u, v) ->
         adjacency.computeIfAbsent(u) { mutableSetOf() }.add(v)
         adjacency.computeIfAbsent(v) { mutableSetOf() }.add(u)
     }
     if (adjacency.isEmpty()) return emptyList()
 
-    fun neighbors(node: String): Set<String> = adjacency[node] ?: emptySet()
-
-    val results = mutableSetOf<List<String>>()
+    data class PathBucket(
+        val paths: MutableList<List<String>> = mutableListOf(),
+        val edges: MutableSet<Pair<String, String>> = mutableSetOf(),
+    )
+    val result = mutableMapOf<Pair<String, String>, PathBucket>()
+    val oneHopPaths = mutableListOf<List<String>>()
+    val twoHopPaths = mutableListOf<List<String>>()
+    val threeHopPaths = mutableListOf<List<String>>()
 
     fun dfs(
         current: String,
         target: String,
         path: List<String>,
+        depth: Int,
     ) {
-        if (path.size > maxDepth + 1) return
+        if (depth > 3) return
         if (current == target) {
-            results.add(path)
+            val key = path.first() to target
+            val bucket = result.getOrPut(key) { PathBucket() }
+            bucket.paths.add(path)
+            path.windowed(2).forEach { (u, v) -> bucket.edges.add(if (u <= v) u to v else v to u) }
+            when (depth) {
+                1 -> oneHopPaths.add(path)
+                2 -> twoHopPaths.add(path)
+                3 -> threeHopPaths.add(path)
+            }
             return
         }
-        for (n in neighbors(current)) {
+        adjacency[current].orEmpty().forEach { n ->
             if (n !in path) {
-                dfs(n, target, path + n)
+                dfs(n, target, path + n, depth + 1)
             }
         }
     }
 
-    for (i in targets.indices) {
-        for (j in i + 1 until targets.size) {
-            dfs(targets[i], targets[j], listOf(targets[i]))
+    for (n1 in targetNodes) {
+        for (n2 in targetNodes) {
+            if (n1 != n2) {
+                dfs(n1, n2, listOf(n1), 0)
+            }
         }
     }
 
-    return results.toList()
-}
+    fun bfsWeightedPaths(
+        source: String,
+        target: String,
+        paths: List<List<String>>,
+        threshold: Double,
+        alpha: Double,
+    ): List<Pair<List<String>, Double>> {
+        if (paths.isEmpty()) return emptyList()
+        val follow = mutableMapOf<String, MutableSet<String>>()
+        paths.forEach { p ->
+            p.windowed(2).forEach { (u, v) ->
+                follow.computeIfAbsent(u) { mutableSetOf() }.add(v)
+            }
+        }
+        val edgeWeights = mutableMapOf<Pair<String, String>, Double>()
+        val results = mutableListOf<List<String>>()
 
-private suspend fun scorePaths(
-    paths: List<List<String>>,
-    knowledgeGraphInst: BaseGraphStorage,
-): List<Pair<List<String>, Double>> {
-    if (paths.isEmpty()) return emptyList()
+        fun incEdge(
+            u: String,
+            v: String,
+            add: Double,
+        ) {
+            edgeWeights[u to v] = (edgeWeights[u to v] ?: 0.0) + add
+        }
 
-    fun normalizedEdge(
-        u: String,
-        v: String,
-    ): Pair<String, String> = if (u <= v) u to v else v to u
-
-    val edgeCounts = mutableMapOf<Pair<String, String>, Int>()
-    paths.forEach { path ->
-        path.windowed(2).forEach { (u, v) ->
-            val key = normalizedEdge(u, v)
-            edgeCounts[key] = (edgeCounts[key] ?: 0) + 1
+        for (n in follow[source].orEmpty()) {
+            incEdge(source, n, 1.0 / follow[source]!!.size)
+            if (n == target) {
+                results.add(listOf(source, n))
+                continue
+            }
+            if ((edgeWeights[source to n] ?: 0.0) > threshold) {
+                for (m in follow[n].orEmpty()) {
+                    val w = (edgeWeights[source to n] ?: 0.0) * alpha / follow[n]!!.size
+                    incEdge(n, m, w)
+                    if (m == target) {
+                        results.add(listOf(source, n, m))
+                        continue
+                    }
+                    if ((edgeWeights[n to m] ?: 0.0) > threshold) {
+                        for (k in follow[m].orEmpty()) {
+                            val w2 = (edgeWeights[n to m] ?: 0.0) * alpha / follow[m]!!.size
+                            incEdge(m, k, w2)
+                            if (k == target) {
+                                results.add(listOf(source, n, m, k))
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        return paths.map { p ->
+            val pw =
+                if (p.size < 2) {
+                    0.0
+                } else {
+                    var sum = 0.0
+                    p.windowed(2).forEach { (u, v) -> sum += edgeWeights[u to v] ?: 0.0 }
+                    sum / (p.size - 1)
+                }
+            p to pw
         }
     }
 
-    suspend fun edgeWeight(
-        u: String,
-        v: String,
-    ): Double {
-        val edge = knowledgeGraphInst.getEdge(u, v) ?: knowledgeGraphInst.getEdge(v, u)
-        val weight = (edge?.get("weight") as? Number)?.toDouble() ?: 1.0
-        val degree = knowledgeGraphInst.edgeDegree(u, v).toDouble()
-        val freq = edgeCounts[normalizedEdge(u, v)]?.toDouble() ?: 0.0
-        return weight + degree + freq
-    }
-
-    suspend fun pathScore(path: List<String>): Double {
-        if (path.size < 2) return 0.0
-        var edgeSum = 0.0
-        for (i in 0 until path.lastIndex) {
-            edgeSum += edgeWeight(path[i], path[i + 1])
+    val threshold = 0.3
+    val alpha = 0.8
+    val allResults = mutableListOf<Pair<List<String>, Double>>()
+    for (n1 in targetNodes) {
+        for (n2 in targetNodes) {
+            if (n1 != n2) {
+                val bucket = result[n1 to n2] ?: continue
+                val paths = bucket.paths
+                val scored = bfsWeightedPaths(n1, n2, paths, threshold, alpha)
+                allResults.addAll(scored)
+            }
         }
-        val edgeAvg = edgeSum / (path.size - 1)
-        val hop = path.size - 1
-        val decay = 0.8.pow((hop - 1).coerceAtLeast(0))
-        return edgeAvg * decay
+    }
+    val sortedResults = allResults.sortedByDescending { it.second }
+    val seen = mutableSetOf<String>()
+    val resultEdge = mutableListOf<Pair<List<String>, Double>>()
+    for ((p, w) in sortedResults) {
+        val key = p.sorted().joinToString("|")
+        if (key !in seen) {
+            seen.add(key)
+            resultEdge.add(p to w)
+        }
     }
 
-    val scored =
-        paths
-            .map { path -> path to pathScore(path) }
-            .sortedByDescending { it.second }
+    val length1 = oneHopPaths.size / 2
+    val length2 = twoHopPaths.size / 2
+    val length3 = threeHopPaths.size / 2
+    val baseResults = mutableListOf<List<String>>()
+    if (oneHopPaths.isNotEmpty()) baseResults.addAll(oneHopPaths.take(length1))
+    if (twoHopPaths.isNotEmpty()) baseResults.addAll(twoHopPaths.take(length2))
+    if (threeHopPaths.isNotEmpty()) baseResults.addAll(threeHopPaths.take(length3))
 
-    val byHop = scored.groupBy { it.first.size - 1 }
-    val selected = mutableListOf<Pair<List<String>, Double>>()
-    (1..3).forEach { hop ->
-        byHop[hop]?.take(5)?.let { selected.addAll(it) }
+    var totalEdges = 15
+    if (baseResults.size < totalEdges) totalEdges = baseResults.size
+    val sortResult =
+        if (resultEdge.isNotEmpty()) {
+            if (resultEdge.size > totalEdges) resultEdge.take(totalEdges) else resultEdge
+        } else {
+            emptyList()
+        }
+    val finalPaths = sortResult.map { it.first }
+
+    suspend fun describePath(path: List<String>): String? {
+        suspend fun nodeDesc(id: String): String {
+            val n = knowledgeGraphInst.getNode(id) ?: return "The entity $id"
+            val t = n["entity_type"] ?: "UNKNOWN"
+            val d = n["description"] ?: ""
+            return "The entity $id is a $t with the description($d)"
+        }
+
+        suspend fun edgeDesc(
+            u: String,
+            v: String,
+        ): String? {
+            val e = knowledgeGraphInst.getEdge(u, v) ?: knowledgeGraphInst.getEdge(v, u)
+            val kw = e?.get("keywords")?.toString().orEmpty()
+            val desc = e?.get("description")?.toString().orEmpty()
+            if (kw.isBlank() && desc.isBlank()) return null
+            val edgeInfo = listOfNotNull(desc.takeIf { it.isNotBlank() }, kw.takeIf { it.isNotBlank() }).joinToString("; ")
+            return "through edge($edgeInfo) to connect to $u and $v."
+        }
+        return when (path.size) {
+            2 -> {
+                val (s, t) = path
+                val e = edgeDesc(s, t) ?: return null
+                "${nodeDesc(s)} $e ${nodeDesc(t)}"
+            }
+
+            3 -> {
+                val (s, b, t) = path
+                val e1 = edgeDesc(s, b) ?: return null
+                val e2 = edgeDesc(b, t) ?: return null
+                "${nodeDesc(s)} $e1 ${nodeDesc(b)} and ${nodeDesc(b)} $e2 ${nodeDesc(t)}"
+            }
+
+            4 -> {
+                val s = path[0]
+                val b1 = path[1]
+                val b2 = path[2]
+                val t = path[3]
+                val e1 = edgeDesc(s, b1) ?: return null
+                val e2 = edgeDesc(b1, b2) ?: return null
+                val e3 = edgeDesc(b2, t) ?: return null
+                "${nodeDesc(s)} $e1 ${nodeDesc(b1)} and ${nodeDesc(b1)} $e2 ${nodeDesc(b2)} and ${nodeDesc(b2)} $e3 ${nodeDesc(t)}"
+            }
+
+            else -> {
+                null
+            }
+        }
     }
-    if (selected.size < 15) {
-        val already = selected.map { it.first }.toSet()
-        selected.addAll(scored.filterNot { it.first in already }.take(15 - selected.size))
+
+    val described = mutableListOf<String>()
+    for (p in finalPaths) {
+        val d = describePath(p)
+        if (d != null) described.add(d)
     }
-    return selected.distinctBy { it.first }
+
+    val truncated =
+        truncateByToken(described.map { mapOf("content" to it) }, queryParam.maxTokenForLocalContext)
+            .map { it["content"].toString() }
+    return truncated
 }
 
 private suspend fun runGlobalMode(
@@ -647,7 +761,8 @@ private suspend fun runGlobalMode(
     if (queryParam.onlyNeedContext) return context
 
     val sysPrompt =
-        Prompts.RAG_RESPONSE.format(
+        Prompts.render(
+            Prompts.RAG_RESPONSE,
             mapOf(
                 "context_data" to context,
                 "response_type" to queryParam.responseType,
@@ -724,7 +839,8 @@ private suspend fun runHybridMode(
     if (queryParam.onlyNeedContext) return mergedContext
 
     val sysPrompt =
-        Prompts.RAG_RESPONSE.format(
+        Prompts.render(
+            Prompts.RAG_RESPONSE,
             mapOf(
                 "context_data" to mergedContext,
                 "response_type" to queryParam.responseType,
@@ -806,7 +922,8 @@ private suspend fun extractKeywords(
     val examples = (globalConfig["keywords_examples"] as? String).orEmpty()
     val language = (globalConfig["language"] as? String) ?: Prompts.DEFAULT_LANGUAGE
     val prompt =
-        Prompts.KEYWORDS_EXTRACTION.format(
+        Prompts.render(
+            Prompts.KEYWORDS_EXTRACTION,
             mapOf(
                 "query" to query,
                 "examples" to examples,
