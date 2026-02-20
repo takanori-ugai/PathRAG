@@ -144,9 +144,10 @@ class PathRAG(
         )
 
     private val llmResponseCache =
-        ResponseCache(
-            globalConfig().also { clearResponseCacheFile() },
-        )
+        run {
+            clearResponseCacheFile()
+            ResponseCache(globalConfig())
+        }
 
     private data class CustomKgEntity(
         val entityName: String,

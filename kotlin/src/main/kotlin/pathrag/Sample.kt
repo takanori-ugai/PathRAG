@@ -98,7 +98,7 @@ fun main() =
         println("Q (global): $question")
         println("A: $globalAnswer\n")
 
-        // Hybrid mode: uses existing hybrid flow.
+        // Hybrid mode: intentionally fetches context and full answer separately (two queries).
         val context = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid", onlyNeedContext = true))
         val hybridAnswer = rag.query(question, param = pathrag.base.QueryParam(mode = "hybrid", onlyNeedContext = false))
         println("Context: $context")
@@ -186,6 +186,42 @@ private fun toJsonElement(value: Any?): JsonElement =
 
         is List<*> -> {
             JsonArray(value.map { toJsonElement(it) })
+        }
+
+        is Array<*> -> {
+            JsonArray(value.map { toJsonElement(it) })
+        }
+
+        is IntArray -> {
+            JsonArray(value.map { JsonPrimitive(it) })
+        }
+
+        is LongArray -> {
+            JsonArray(value.map { JsonPrimitive(it) })
+        }
+
+        is DoubleArray -> {
+            JsonArray(value.map { JsonPrimitive(it) })
+        }
+
+        is FloatArray -> {
+            JsonArray(value.map { JsonPrimitive(it) })
+        }
+
+        is BooleanArray -> {
+            JsonArray(value.map { JsonPrimitive(it) })
+        }
+
+        is ShortArray -> {
+            JsonArray(value.map { JsonPrimitive(it) })
+        }
+
+        is ByteArray -> {
+            JsonArray(value.map { JsonPrimitive(it) })
+        }
+
+        is CharArray -> {
+            JsonArray(value.map { JsonPrimitive(it.toString()) })
         }
 
         else -> {

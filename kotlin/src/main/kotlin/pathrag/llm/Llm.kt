@@ -76,6 +76,8 @@ private fun buildHistoryBlock(historyMessages: List<Map<String, String>>): Strin
  * @param historyMessages Conversation history as a list of maps with keys like `"role"` and `"content"`.
  * @param keywordExtraction When true, request keyword-style output (JSON with keyword arrays) instead of a normal completion.
  * @param maxTokens Optional maximum length (number of characters) to trim the returned stubbed response when the API key is missing.
+ * @param stream Reserved for future streaming support; currently ignored in all code paths.
+ * @param hashingKv Reserved for future request deduplication; currently ignored in all code paths.
  * @return The model's text response, a keyword JSON string when `keywordExtraction` is true, a prompt-derived stub
  *         if the API key is missing, or `Prompts.FAIL_RESPONSE` after persistent failures.
  */
@@ -156,9 +158,10 @@ suspend fun openAiComplete(
  * @param prompt The user prompt to be appended to the constructed conversation.
  * @param systemPrompt Optional system instruction to prepend to the conversation.
  * @param historyMessages Ordered conversation history as a list of maps with keys "role" and "content".
- * @param keywordExtraction If true, indicates the caller is requesting keyword-style output (handled by the model or fallback).
+ * @param keywordExtraction If true, indicates the caller is requesting keyword-style output; the prompt should already
+ *        encode this requirement when using Ollama.
  * @param stream Reserved for streaming behavior (ignored if the underlying model/client does not support it).
- * @param maxTokens Optional maximum token limit to request from the model (honored if supported by the client).
+ * @param maxTokens Optional maximum token limit to request from the model; forwarded to Ollama as `numPredict` when set.
  * @param hashingKv Optional opaque value used for request hashing or deduplication by callers.
  * @return The model's text completion, or the sentinel Prompts.FAIL_RESPONSE if the call fails after retries.
  */
@@ -175,14 +178,17 @@ suspend fun ollamaComplete(
 ): String {
     val baseUrl = System.getenv("OLLAMA_BASE_URL") ?: System.getenv("OLLAMA_HOST") ?: "http://localhost:11434"
     val modelName = model.ifBlank { System.getenv("OLLAMA_MODEL") ?: DEFAULT_OLLAMA_MODEL }
-    val chatKey = "ollama|$modelName|$baseUrl"
+    val maxTokensValue = maxTokens?.takeIf { it > 0 }
+    val chatKey = "ollama|$modelName|$baseUrl|numPredict=$maxTokensValue"
     val chatModel: ChatModel =
         chatModels.computeIfAbsent(chatKey) {
-            OllamaChatModel
-                .builder()
-                .baseUrl(baseUrl)
-                .modelName(modelName)
-                .build()
+            val builder =
+                OllamaChatModel
+                    .builder()
+                    .baseUrl(baseUrl)
+                    .modelName(modelName)
+            maxTokensValue?.let { builder.numPredict(it) }
+            builder.build()
         }
 
     val historyBlock = buildHistoryBlock(historyMessages)

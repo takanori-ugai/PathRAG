@@ -188,6 +188,18 @@ private fun format2(value: Double): String = String.format(Locale.US, "%.2f", va
 
 private fun format3(value: Double): String = String.format(Locale.US, "%.3f", value)
 
+private fun subAnswerMatchesExpected(
+    answer: String,
+    expected: String,
+): Boolean {
+    val normalizedAnswer = answer.trim()
+    val normalizedExpected = expected.trim()
+    if (normalizedExpected.isEmpty() || normalizedAnswer.isEmpty()) return false
+    if (normalizedAnswer.equals(normalizedExpected, ignoreCase = true)) return true
+    val pattern = Regex("\\b${Regex.escape(normalizedExpected)}\\b", RegexOption.IGNORE_CASE)
+    return pattern.containsMatchIn(normalizedAnswer)
+}
+
 private suspend fun processSample(
     index: Int,
     line: String,
@@ -235,7 +247,7 @@ private suspend fun processSample(
                     )
                 val normalizedExpected = decomposition.answer.trim()
                 normalizedExpected.isNotEmpty() &&
-                    subQuestionAnswer.trim().contains(normalizedExpected, ignoreCase = true)
+                    subAnswerMatchesExpected(subQuestionAnswer, normalizedExpected)
             }
         val subEmCorrect = subEmResults.count { it }
         val subEmTotal = subEmResults.size

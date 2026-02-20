@@ -184,9 +184,9 @@ suspend fun extractEntities(
                         fun appendHistory(
                             history: MutableList<Map<String, String>>,
                             role: String,
-                            content: String,
+                            message: String,
                         ) {
-                            history.add(mapOf("role" to role, "content" to content))
+                            history.add(mapOf("role" to role, "content" to message))
                         }
 
                         var payload = decodePayload(response)
@@ -512,6 +512,7 @@ private suspend fun mergeEdgesThenUpsert(
         "description" to description,
         "keywords" to keywords,
         "source_id" to sourceId,
+        "weight" to weight.sum(),
     )
 }
 
