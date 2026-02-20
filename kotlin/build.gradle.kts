@@ -19,7 +19,7 @@ group = "com.pathrag"
 version = "0.0.1"
 
 val ktorVersion = "2.3.12"
-val koinVersion = "3.5.6"
+val koinVersion = "4.1.1"
 val javafxVersion = "21.0.5"
 val osName = System.getProperty("os.name").lowercase()
 val archName = System.getProperty("os.arch").lowercase()
