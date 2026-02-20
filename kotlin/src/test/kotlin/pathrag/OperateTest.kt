@@ -1,6 +1,8 @@
 package pathrag
 
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import pathrag.base.BaseGraphStorage
 import pathrag.base.BaseKVStorage
 import pathrag.base.BaseVectorStorage
@@ -17,31 +19,34 @@ import kotlin.test.assertTrue
 private class FakeGraphStorage : BaseGraphStorage("test", emptyMap()) {
     private val nodes = mutableMapOf<String, MutableMap<String, Any?>>()
     private val edges = mutableMapOf<Pair<String, String>, MutableMap<String, Any?>>()
+    private val lock = Mutex()
 
-    override suspend fun hasNode(nodeId: String): Boolean = nodes.containsKey(nodeId)
+    override suspend fun hasNode(nodeId: String): Boolean = lock.withLock { nodes.containsKey(nodeId) }
 
     override suspend fun hasEdge(
         sourceNodeId: String,
         targetNodeId: String,
-    ): Boolean = edges.containsKey(sourceNodeId to targetNodeId)
+    ): Boolean = lock.withLock { edges.containsKey(sourceNodeId to targetNodeId) }
 
-    override suspend fun nodeDegree(nodeId: String): Int = edges.keys.count { it.first == nodeId || it.second == nodeId }
+    override suspend fun nodeDegree(nodeId: String): Int = lock.withLock { edges.keys.count { it.first == nodeId || it.second == nodeId } }
 
-    override suspend fun getNode(nodeId: String): Map<String, Any?>? = nodes[nodeId]
+    override suspend fun getNode(nodeId: String): Map<String, Any?>? = lock.withLock { nodes[nodeId]?.toMap() }
 
     override suspend fun getEdge(
         sourceNodeId: String,
         targetNodeId: String,
-    ): Map<String, Any?>? = edges[sourceNodeId to targetNodeId]
+    ): Map<String, Any?>? = lock.withLock { edges[sourceNodeId to targetNodeId]?.toMap() }
 
     override suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>> =
-        edges.keys.filter { it.first == sourceNodeId || it.second == sourceNodeId }
+        lock.withLock { edges.keys.filter { it.first == sourceNodeId || it.second == sourceNodeId } }
 
     override suspend fun upsertNode(
         nodeId: String,
         nodeData: Map<String, Any?>,
     ) {
-        nodes[nodeId] = (nodes[nodeId] ?: mutableMapOf()).apply { putAll(nodeData) }
+        lock.withLock {
+            nodes[nodeId] = (nodes[nodeId] ?: mutableMapOf()).apply { putAll(nodeData) }
+        }
     }
 
     override suspend fun upsertEdge(
@@ -49,24 +54,28 @@ private class FakeGraphStorage : BaseGraphStorage("test", emptyMap()) {
         targetNodeId: String,
         edgeData: Map<String, Any?>,
     ) {
-        edges[sourceNodeId to targetNodeId] = (edges[sourceNodeId to targetNodeId] ?: mutableMapOf()).apply { putAll(edgeData) }
+        lock.withLock {
+            edges[sourceNodeId to targetNodeId] = (edges[sourceNodeId to targetNodeId] ?: mutableMapOf()).apply { putAll(edgeData) }
+        }
     }
 
     override suspend fun deleteEdge(
         sourceNodeId: String,
         targetNodeId: String,
     ) {
-        edges.remove(sourceNodeId to targetNodeId)
+        lock.withLock { edges.remove(sourceNodeId to targetNodeId) }
     }
 
     override suspend fun deleteNode(nodeId: String) {
-        nodes.remove(nodeId)
-        edges.keys.filter { it.first == nodeId || it.second == nodeId }.forEach { edges.remove(it) }
+        lock.withLock {
+            nodes.remove(nodeId)
+            edges.keys.filter { it.first == nodeId || it.second == nodeId }.forEach { edges.remove(it) }
+        }
     }
 
-    override suspend fun nodes(): List<String> = nodes.keys.toList()
+    override suspend fun nodes(): List<String> = lock.withLock { nodes.keys.toList() }
 
-    override suspend fun edges(): List<Pair<String, String>> = edges.keys.toList()
+    override suspend fun edges(): List<Pair<String, String>> = lock.withLock { edges.keys.toList() }
 }
 
 private class FakeVectorStorage(

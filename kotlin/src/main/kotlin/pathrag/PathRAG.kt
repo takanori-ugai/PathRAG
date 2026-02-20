@@ -68,7 +68,7 @@ class PathRAG(
             ?.map { it.trim() }
             ?.filter { it.isNotBlank() }
             ?: emptyList(),
-    private val clearCacheOnStart: Boolean = true,
+    private val clearCacheOnStart: Boolean = false,
     private val addonParams: AddonParams =
         AddonParams(
             entityTypes = System.getenv("ENTITY_TYPES")?.split(",")?.map { it.trim() } ?: emptyList(),
@@ -89,10 +89,14 @@ class PathRAG(
         if (!clearCacheOnStart) return
         val cachePath = "$workingDir/llm_cache.json"
         val cacheFile = java.io.File(cachePath)
-        if (cacheFile.exists()) {
-            if (!cacheFile.delete()) {
-                logger.warn { "Failed to delete cache file: $cachePath" }
+        try {
+            if (cacheFile.exists()) {
+                if (!cacheFile.delete()) {
+                    logger.warn { "Failed to delete cache file: $cachePath" }
+                }
             }
+        } catch (e: SecurityException) {
+            logger.warn(e) { "Security manager denied access to cache file: $cachePath" }
         }
     }
 

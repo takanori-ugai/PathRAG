@@ -5,6 +5,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -151,126 +152,130 @@ suspend fun extractEntities(
     val orderedChunks = chunks.entries.toList()
     val maxTokensForExtraction = (globalConfig["max_tokens_for_extraction"] as? Int) ?: 2048
 
+    val concurrencyLimit = (globalConfig["max_concurrent_extractions"] as? Number)?.toInt() ?: 16
+    val semaphore = kotlinx.coroutines.sync.Semaphore(concurrencyLimit)
+
     val results =
         coroutineScope {
             orderedChunks
                 .map { entry ->
                     async(Dispatchers.Default) {
-                        val (chunkId, chunk) = entry
-                        val content = chunk["content"]?.toString().orEmpty()
-                        if (content.isBlank()) {
-                            return@async Pair(
-                                emptyMap<String, List<Map<String, String>>>(),
-                                emptyMap<Pair<String, String>, List<Map<String, Any?>>>(),
-                            )
-                        }
-                        val prompt =
-                            Prompts.render(
-                                Prompts.ENTITY_REL_JSON,
-                                mapOf(
-                                    "text" to content,
-                                    "language" to language,
-                                    "entity_types" to entityTypes.joinToString(", "),
-                                    "examples" to examples,
-                                ),
-                            )
-                        var response = llm(prompt, null, emptyList(), false, false, maxTokensForExtraction, null)
-
-                        fun decodePayload(raw: String): ExtractionPayload =
-                            runCatching { Json.decodeFromString<ExtractionPayload>(extractJsonPayload(raw)) }
-                                .onFailure { logger.warn { "Failed to parse LLM extraction for chunk $chunkId: ${it.message}" } }
-                                .getOrElse { ExtractionPayload() }
-
-                        fun appendHistory(
-                            history: MutableList<Map<String, String>>,
-                            role: String,
-                            message: String,
-                        ) {
-                            history.add(mapOf("role" to role, "content" to message))
-                        }
-
-                        var payload = decodePayload(response)
-                        val history = mutableListOf<Map<String, String>>()
-                        appendHistory(history, "user", prompt)
-                        appendHistory(history, "assistant", response)
-                        if (entityExtractMaxGleaning > 0) {
-                            for (gleanIndex in 0 until entityExtractMaxGleaning) {
-                                val gleanResponse =
-                                    llm(
-                                        Prompts.ENTITY_CONTINUE_JSON,
-                                        null,
-                                        history,
-                                        false,
-                                        false,
-                                        maxTokensForExtraction,
-                                        null,
-                                    )
-                                appendHistory(history, "user", Prompts.ENTITY_CONTINUE_JSON)
-                                appendHistory(history, "assistant", gleanResponse)
-                                val gleanPayload = decodePayload(gleanResponse)
-                                payload =
-                                    ExtractionPayload(
-                                        entities = payload.entities + gleanPayload.entities,
-                                        relationships = payload.relationships + gleanPayload.relationships,
-                                    )
-
-                                if (gleanIndex == entityExtractMaxGleaning - 1) break
-                                val ifLoopResponse =
-                                    llm(
-                                        Prompts.ENTITY_IF_LOOP_JSON,
-                                        null,
-                                        history,
-                                        false,
-                                        false,
-                                        maxTokensForExtraction,
-                                        null,
-                                    ).trim().trim('"', '\'').lowercase()
-                                appendHistory(history, "user", Prompts.ENTITY_IF_LOOP_JSON)
-                                appendHistory(history, "assistant", ifLoopResponse)
-                                if (ifLoopResponse != "yes") break
+                        semaphore.withPermit {
+                            val (chunkId, chunk) = entry
+                            val content = chunk["content"]?.toString().orEmpty()
+                            if (content.isBlank()) {
+                                return@withPermit Pair(
+                                    emptyMap<String, List<Map<String, String>>>(),
+                                    emptyMap<Pair<String, String>, List<Map<String, Any?>>>(),
+                                )
                             }
+                            val prompt =
+                                Prompts.render(
+                                    Prompts.ENTITY_REL_JSON,
+                                    mapOf(
+                                        "text" to content,
+                                        "language" to language,
+                                        "entity_types" to entityTypes.joinToString(", "),
+                                        "examples" to examples,
+                                    ),
+                                )
+                            val response = llm(prompt, null, emptyList(), false, false, maxTokensForExtraction, null)
+
+                            fun decodePayload(raw: String): ExtractionPayload =
+                                runCatching { Json.decodeFromString<ExtractionPayload>(extractJsonPayload(raw)) }
+                                    .onFailure { logger.warn { "Failed to parse LLM extraction for chunk $chunkId: ${it.message}" } }
+                                    .getOrElse { ExtractionPayload() }
+
+                            fun appendHistory(
+                                history: MutableList<Map<String, String>>,
+                                role: String,
+                                message: String,
+                            ) {
+                                history.add(mapOf("role" to role, "content" to message))
+                            }
+
+                            var payload = decodePayload(response)
+                            val history = mutableListOf<Map<String, String>>()
+                            appendHistory(history, "user", prompt)
+                            appendHistory(history, "assistant", response)
+                            if (entityExtractMaxGleaning > 0) {
+                                for (gleanIndex in 0 until entityExtractMaxGleaning) {
+                                    val gleanResponse =
+                                        llm(
+                                            Prompts.ENTITY_CONTINUE_JSON,
+                                            null,
+                                            history,
+                                            false,
+                                            false,
+                                            maxTokensForExtraction,
+                                            null,
+                                        )
+                                    appendHistory(history, "user", Prompts.ENTITY_CONTINUE_JSON)
+                                    appendHistory(history, "assistant", gleanResponse)
+                                    val gleanPayload = decodePayload(gleanResponse)
+                                    payload =
+                                        ExtractionPayload(
+                                            entities = payload.entities + gleanPayload.entities,
+                                            relationships = payload.relationships + gleanPayload.relationships,
+                                        )
+
+                                    if (gleanIndex == entityExtractMaxGleaning - 1) break
+                                    val ifLoopResponse =
+                                        llm(
+                                            Prompts.ENTITY_IF_LOOP_JSON,
+                                            null,
+                                            history,
+                                            false,
+                                            false,
+                                            maxTokensForExtraction,
+                                            null,
+                                        ).trim().trim('"', '\'').lowercase()
+                                    appendHistory(history, "user", Prompts.ENTITY_IF_LOOP_JSON)
+                                    appendHistory(history, "assistant", ifLoopResponse)
+                                    if (ifLoopResponse != "yes") break
+                                }
+                            }
+
+                            val entities = payload.entities.filter { it.entityName.isNotBlank() }
+                            val relationships = payload.relationships.filter { it.srcId.isNotBlank() && it.tgtId.isNotBlank() }
+
+                            val nodes =
+                                entities
+                                    .mapNotNull { ent ->
+                                        val name = normalizeId(ent.entityName)
+                                        if (name.isBlank()) return@mapNotNull null
+                                        val entityType = ent.entityType.ifBlank { "UNKNOWN" }.uppercase()
+                                        mapOf(
+                                            "entity_type" to entityType,
+                                            "description" to ent.description,
+                                            "source_id" to chunkId,
+                                            "entity_name" to name,
+                                        )
+                                    }.groupBy { it["entity_name"].orEmpty() }
+
+                            val edges =
+                                relationships
+                                    .mapNotNull { rel ->
+                                        val src = normalizeId(rel.srcId)
+                                        val tgt = normalizeId(rel.tgtId)
+                                        if (src.isBlank() || tgt.isBlank()) return@mapNotNull null
+                                        mapOf(
+                                            "src_id" to src,
+                                            "tgt_id" to tgt,
+                                            "weight" to rel.weight,
+                                            "description" to rel.description,
+                                            "keywords" to rel.keywords,
+                                            "source_id" to chunkId,
+                                        )
+                                    }.groupBy {
+                                        Pair(
+                                            it["src_id"]?.toString().orEmpty(),
+                                            it["tgt_id"]?.toString().orEmpty(),
+                                        )
+                                    }
+
+                            Pair(nodes, edges)
                         }
-
-                        val entities = payload.entities.filter { it.entityName.isNotBlank() }
-                        val relationships = payload.relationships.filter { it.srcId.isNotBlank() && it.tgtId.isNotBlank() }
-
-                        val nodes =
-                            entities
-                                .mapNotNull { ent ->
-                                    val name = normalizeId(ent.entityName)
-                                    if (name.isBlank()) return@mapNotNull null
-                                    val entityType = ent.entityType.ifBlank { "UNKNOWN" }.uppercase()
-                                    mapOf(
-                                        "entity_type" to entityType,
-                                        "description" to ent.description,
-                                        "source_id" to chunkId,
-                                        "entity_name" to name,
-                                    )
-                                }.groupBy { it["entity_name"].orEmpty() }
-                                .mapValues { it.value.toList() }
-
-                        val edges =
-                            relationships
-                                .mapNotNull { rel ->
-                                    val src = normalizeId(rel.srcId)
-                                    val tgt = normalizeId(rel.tgtId)
-                                    if (src.isBlank() || tgt.isBlank()) return@mapNotNull null
-                                    mapOf(
-                                        "src_id" to src,
-                                        "tgt_id" to tgt,
-                                        "weight" to rel.weight,
-                                        "description" to rel.description,
-                                        "keywords" to rel.keywords,
-                                        "source_id" to chunkId,
-                                    )
-                                }.groupBy {
-                                    Pair(
-                                        it["src_id"]?.toString().orEmpty(),
-                                        it["tgt_id"]?.toString().orEmpty(),
-                                    )
-                                }.mapValues { it.value.toList() }
-
-                        Pair(nodes, edges)
                     }
                 }.awaitAll()
         }
@@ -466,14 +471,12 @@ private suspend fun mergeEdgesThenUpsert(
     val alreadyDescriptions = mutableListOf<String>()
     val alreadyKeywords = mutableListOf<String>()
 
-    if (knowledgeGraphInst.hasEdge(srcId, tgtId)) {
-        val alreadyEdge = knowledgeGraphInst.getEdge(srcId, tgtId)
-        if (alreadyEdge != null) {
-            alreadyWeights.add((alreadyEdge["weight"] as? Number)?.toDouble() ?: 0.0)
-            alreadySourceIds.addAll(splitBySep(alreadyEdge["source_id"]?.toString().orEmpty(), Prompts.GRAPH_FIELD_SEP))
-            alreadyDescriptions.add(alreadyEdge["description"]?.toString().orEmpty())
-            alreadyKeywords.addAll(splitBySep(alreadyEdge["keywords"]?.toString().orEmpty(), Prompts.GRAPH_FIELD_SEP))
-        }
+    val alreadyEdge = knowledgeGraphInst.getEdge(srcId, tgtId)
+    if (alreadyEdge != null) {
+        alreadyWeights.add((alreadyEdge["weight"] as? Number)?.toDouble() ?: 0.0)
+        alreadySourceIds.addAll(splitBySep(alreadyEdge["source_id"]?.toString().orEmpty(), Prompts.GRAPH_FIELD_SEP))
+        alreadyDescriptions.add(alreadyEdge["description"]?.toString().orEmpty())
+        alreadyKeywords.addAll(splitBySep(alreadyEdge["keywords"]?.toString().orEmpty(), Prompts.GRAPH_FIELD_SEP))
     }
 
     val weight =

@@ -188,15 +188,28 @@ private fun format2(value: Double): String = String.format(Locale.US, "%.2f", va
 
 private fun format3(value: Double): String = String.format(Locale.US, "%.3f", value)
 
+private fun normalizeAnswer(text: String): String {
+    val articles = Regex("\\b(a|an|the)\\b", RegexOption.IGNORE_CASE)
+    val punctuation = Regex("[^\\w\\s]")
+    return text
+        .trim()
+        .let { articles.replace(it, "") }
+        .let { punctuation.replace(it, "") }
+        .replace(Regex("\\s+"), " ")
+        .trim()
+        .lowercase()
+}
+
 private fun subAnswerMatchesExpected(
     answer: String,
     expected: String,
 ): Boolean {
-    val normalizedAnswer = answer.trim()
-    val normalizedExpected = expected.trim()
+    val normalizedAnswer = normalizeAnswer(answer)
+    val normalizedExpected = normalizeAnswer(expected)
     if (normalizedExpected.isEmpty() || normalizedAnswer.isEmpty()) return false
     if (normalizedAnswer.equals(normalizedExpected, ignoreCase = true)) return true
-    val pattern = Regex("\\b${Regex.escape(normalizedExpected)}\\b", RegexOption.IGNORE_CASE)
+    val escaped = Regex.escape(normalizedExpected)
+    val pattern = Regex("(?<![\\w])$escaped(?![\\w])", RegexOption.IGNORE_CASE)
     return pattern.containsMatchIn(normalizedAnswer)
 }
 
@@ -239,15 +252,18 @@ private suspend fun processSample(
         val expectedAnswer = sample.answer
         val matches = queryAnswer.trim().equals(expectedAnswer.trim(), ignoreCase = true)
         val subEmResults =
-            sample.questionDecomposition.map { decomposition ->
-                val subQuestionAnswer =
-                    rag.aquery(
-                        "Answer in one or few words, no extra information: ${decomposition.question}",
-                        param = QueryParam(mode = "hybrid"),
-                    )
-                val normalizedExpected = decomposition.answer.trim()
-                normalizedExpected.isNotEmpty() &&
-                    subAnswerMatchesExpected(subQuestionAnswer, normalizedExpected)
+            kotlinx.coroutines.coroutineScope {
+                sample.questionDecomposition
+                    .map { decomposition ->
+                        async {
+                            val subQuestionAnswer =
+                                rag.aquery(
+                                    "Answer in one or few words, no extra information: ${decomposition.question}",
+                                    param = QueryParam(mode = "hybrid"),
+                                )
+                            subAnswerMatchesExpected(subQuestionAnswer, decomposition.answer)
+                        }
+                    }.awaitAll()
             }
         val subEmCorrect = subEmResults.count { it }
         val subEmTotal = subEmResults.size

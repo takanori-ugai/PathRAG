@@ -79,12 +79,16 @@ fun main() =
 
         val graphSnapshot = snapshotGraphToJson(rag.graph())
         val graphPath = Paths.get(workingDir, "knowledge-graph.json")
-        Files.createDirectories(graphPath.parent)
-        Files.writeString(
-            graphPath,
-            prettyJson.encodeToString(graphSnapshot),
-        )
-        println("Knowledge graph saved to: ${graphPath.toAbsolutePath()}")
+        try {
+            Files.createDirectories(graphPath.parent)
+            Files.writeString(
+                graphPath,
+                prettyJson.encodeToString(graphSnapshot),
+            )
+            println("Knowledge graph saved to: ${graphPath.toAbsolutePath()}")
+        } catch (e: java.io.IOException) {
+            System.err.println("Warning: failed to write knowledge graph snapshot to $graphPath: ${e.message}")
+        }
 
         val question = "What themes does Dickens explore?"
 
