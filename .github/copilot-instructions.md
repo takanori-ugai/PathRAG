@@ -10,7 +10,7 @@ The **Kotlin implementation** (`/kotlin/`) is a converted version of the origina
 - **Kotlin** (`/kotlin/`): Production-grade port with improved performance, type safety, and deployment via Ktor
 
 When making changes:
-- **Bugfixes** affecting core logic (entity extraction, graph operations, queries) should be applied to **both** versions to keep them in sync
+- **Bug fixes** affecting core logic (entity extraction, graph operations, queries) should be applied to **both** versions to keep them in sync
 - **Kotlin-specific enhancements** (performance, concurrency) don't need Python equivalents
 - **Python API layer** (`app.py`) wraps the Python PathRAG module for REST endpoints
 - **Kotlin Application** provides its own Ktor-based REST API with similar endpoints
@@ -158,7 +158,7 @@ Implementations use `asyncio`-like patterns with `a`-prefixed suspend functions 
 
 ### Prompting & Extraction
 
-- Extraction prompts are centralized in `prompt/Prompts.kt` (keyword extraction, similarity checking)
+- Extraction prompts are centralized in `prompt/Prompts.kt` (keyword extraction, entity/relationship extraction, gleaning continuation, similarity checking)
 - LLM functions accept `ChatModel` instances and return structured responses
 - Entity extraction uses configurable language and examples via environment variables
 

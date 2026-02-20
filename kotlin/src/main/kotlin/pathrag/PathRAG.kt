@@ -43,7 +43,10 @@ class PathRAG(
     private val language: String = System.getenv("LANGUAGE") ?: "English",
     private val keywordExamples: String =
         (System.getenv("KEYWORDS_EXAMPLES") ?: "")
-            .ifBlank { pathrag.prompt.Prompts.KEYWORDS_EXTRACTION_EXAMPLES.joinToString("\n") },
+            .ifBlank {
+                pathrag.prompt.Prompts.KEYWORDS_EXTRACTION_EXAMPLES
+                    .joinToString("\n")
+            },
     private val similarityCheckPrompt: String = System.getenv("SIMILARITY_CHECK_PROMPT") ?: pathrag.prompt.Prompts.SIMILARITY_CHECK,
     private val embeddingCacheConfig: Map<String, Any?> =
         mapOf(
@@ -87,7 +90,9 @@ class PathRAG(
         val cachePath = "$workingDir/llm_cache.json"
         val cacheFile = java.io.File(cachePath)
         if (cacheFile.exists()) {
-            cacheFile.delete()
+            if (!cacheFile.delete()) {
+                logger.warn { "Failed to delete cache file: $cachePath" }
+            }
         }
     }
 
@@ -329,12 +334,15 @@ class PathRAG(
     fun insertCustomKg(customKg: CustomKgPayload) = runBlockingMaybe { ainsertCustomKg(customKg) }
 
     /**
-     * Accepts a legacy Map-based custom knowledge graph payload, converts it to a strongly-typed payload, and upserts its chunks, entities, and relationships into storage.
+     * Accepts a legacy Map-based custom knowledge graph payload, converts it to a strongly-typed payload, and upserts
+     * its chunks, entities, and relationships into storage.
      *
      * The map is expected to contain keys "chunks", "entities", and "relationships" with values structured like:
      * - "chunks": List of maps with keys "content" (String) and optional "sourceId" (String)
-     * - "entities": List of maps with keys "entityName" (String), optional "entityType" (String), optional "description" (String), and optional "sourceId" (String)
-     * - "relationships": List of maps with keys "srcId" (String), "tgtId" (String), and optional "description" (String), "keywords" (String), "weight" (Number), and "sourceId" (String)
+     * - "entities": List of maps with keys "entityName" (String), optional "entityType" (String),
+     *   optional "description" (String), and optional "sourceId" (String)
+     * - "relationships": List of maps with keys "srcId" (String), "tgtId" (String),
+     *   and optional "description" (String), "keywords" (String), "weight" (Number), and "sourceId" (String)
      *
      * @param customKg A legacy Map representation of a custom KG payload matching the structure described above.
      */
@@ -433,7 +441,8 @@ class PathRAG(
      * - Entities require a non-blank "entity_name"; missing fields default to empty strings.
      * - Relationships require non-blank "src_id" and "tgt_id"; "weight" is parsed as a Double and defaults to 1.0 on parse failure.
      *
-     * @return A CustomKgPayload containing parsed chunks, entities, and relationships. Returns an empty payload when the receiver is not a Map or no valid items are present.
+     * @return A CustomKgPayload containing parsed chunks, entities, and relationships. Returns an empty payload when the
+     *         receiver is not a Map or no valid items are present.
      */
     private fun Any?.toCustomKgPayload(): CustomKgPayload {
         val map = this as? Map<*, *> ?: return CustomKgPayload()
@@ -529,7 +538,8 @@ class PathRAG(
     /**
      * Delete the entity with the given name and all of its relationships synchronously.
      *
-     * @param entityName The name or identifier of the entity to delete; comparison is case-insensitive and the name is normalized to uppercase.
+     * @param entityName The name or identifier of the entity to delete; comparison is case-insensitive and the name is
+     *                   normalized to uppercase.
      */
     fun deleteByEntity(entityName: String) = runBlockingMaybe { adeleteByEntity(entityName) }
 
@@ -648,7 +658,8 @@ class PathRAG(
     /**
      * Remove the graph storage and its associated entity and relationship vector stores.
      *
-     * Drops the chunk-entity-relationship graph and the entities and relationships vector databases, and logs an informational message on completion.
+     * Drops the chunk-entity-relationship graph and the entities and relationships vector databases, and logs an
+     * informational message on completion.
      */
     suspend fun adropGraph() {
         chunkEntityRelationGraph.drop()

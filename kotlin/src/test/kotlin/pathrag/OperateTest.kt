@@ -78,7 +78,7 @@ private class FakeVectorStorage(
         topK: Int,
     ): List<Map<String, Any?>> = results.take(topK)
 
-    override suspend fun upsert(data: Map<String, Map<String, Any?>>) {}
+    override suspend fun upsert(data: Map<String, Map<String, Any?>>): Unit = Unit
 }
 
 private class FakeKVStorage(
@@ -96,9 +96,9 @@ private class FakeKVStorage(
 
     override suspend fun filterKeys(data: List<String>): Set<String> = data.filterNot { records.containsKey(it) }.toSet()
 
-    override suspend fun upsert(data: Map<String, Map<String, Any>>) {}
+    override suspend fun upsert(data: Map<String, Map<String, Any>>): Unit = Unit
 
-    override suspend fun drop() {}
+    override suspend fun drop(): Unit = Unit
 }
 
 class OperateTest {
@@ -200,7 +200,7 @@ class OperateTest {
                     hashingKv = cache,
                 )
             assertEquals(callsAfterFirst, calls, "LLM should not be called again on cache hit")
-            val cached = cache.handleCache(computeArgsHash(param.mode, "question"), "question", param.mode)
+            val cached = cache.handleCache(computeArgsHash(param, "question"), "question", param.mode)
             assertEquals(first, second)
             assertEquals(first, cached)
         }

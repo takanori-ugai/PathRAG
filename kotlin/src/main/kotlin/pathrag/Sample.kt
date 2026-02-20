@@ -13,6 +13,8 @@ import kotlinx.serialization.json.buildJsonObject
 import java.nio.file.Files
 import java.nio.file.Paths
 
+private val prettyJson = Json { prettyPrint = true }
+
 /**
  * Demonstrates a minimal PathRAG run: loads environment settings, initializes a PathRAG instance,
  * seeds it with example Dickens passages, and performs local, global, and hybrid queries printing each result.
@@ -80,7 +82,7 @@ fun main() =
         Files.createDirectories(graphPath.parent)
         Files.writeString(
             graphPath,
-            Json { prettyPrint = true }.encodeToString(graphSnapshot),
+            prettyJson.encodeToString(graphSnapshot),
         )
         println("Knowledge graph saved to: ${graphPath.toAbsolutePath()}")
 
@@ -152,12 +154,27 @@ private fun toJsonObject(data: Map<String, Any?>?): JsonObject =
 
 private fun toJsonElement(value: Any?): JsonElement =
     when (value) {
-        null -> JsonNull
-        is JsonElement -> value
-        is String -> JsonPrimitive(value)
-        is Number -> JsonPrimitive(value)
-        is Boolean -> JsonPrimitive(value)
-        is Map<*, *> ->
+        null -> {
+            JsonNull
+        }
+
+        is JsonElement -> {
+            value
+        }
+
+        is String -> {
+            JsonPrimitive(value)
+        }
+
+        is Number -> {
+            JsonPrimitive(value)
+        }
+
+        is Boolean -> {
+            JsonPrimitive(value)
+        }
+
+        is Map<*, *> -> {
             buildJsonObject {
                 value.forEach { (k, v) ->
                     if (k != null) {
@@ -165,6 +182,13 @@ private fun toJsonElement(value: Any?): JsonElement =
                     }
                 }
             }
-        is List<*> -> JsonArray(value.map { toJsonElement(it) })
-        else -> JsonPrimitive(value.toString())
+        }
+
+        is List<*> -> {
+            JsonArray(value.map { toJsonElement(it) })
+        }
+
+        else -> {
+            JsonPrimitive(value.toString())
+        }
     }

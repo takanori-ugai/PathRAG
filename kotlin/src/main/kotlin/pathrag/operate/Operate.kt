@@ -281,14 +281,12 @@ suspend fun extractEntities(
         nodes.forEach { (k, v) ->
             if (k.isBlank()) return@forEach
             val bucket = maybeNodes.getOrPut(k) { mutableListOf() }
-            @Suppress("UNCHECKED_CAST")
-            bucket.addAll(v as List<Map<String, String>>)
+            bucket.addAll(v)
         }
         edges.forEach { (k, v) ->
             if (k.first.isBlank() || k.second.isBlank()) return@forEach
             val bucket = maybeEdges.getOrPut(k) { mutableListOf() }
-            @Suppress("UNCHECKED_CAST")
-            bucket.addAll(v as List<Map<String, Any?>>)
+            bucket.addAll(v)
         }
     }
 
@@ -301,6 +299,48 @@ suspend fun extractEntities(
                     }
                 }.awaitAll()
         }
+
+    val placeholderDescriptions = mutableMapOf<String, MutableList<String>>()
+    val placeholderSourceIds = mutableMapOf<String, MutableList<String>>()
+    for ((key, data) in maybeEdges) {
+        val descriptions =
+            data
+                .mapNotNull { it["description"]?.toString() }
+                .filter { it.isNotBlank() }
+        val sourceIds =
+            data
+                .mapNotNull { it["source_id"]?.toString() }
+                .filter { it.isNotBlank() }
+        for (nodeId in listOf(key.first, key.second)) {
+            placeholderDescriptions.getOrPut(nodeId) { mutableListOf() }.addAll(descriptions)
+            placeholderSourceIds.getOrPut(nodeId) { mutableListOf() }.addAll(sourceIds)
+        }
+    }
+
+    val placeholderNodeIds = (placeholderDescriptions.keys + placeholderSourceIds.keys).toSet()
+    for (nodeId in placeholderNodeIds) {
+        if (knowledgeGraphInst.getNode(nodeId) != null) continue
+        val description =
+            placeholderDescriptions
+                .getOrDefault(nodeId, mutableListOf())
+                .filter { it.isNotBlank() }
+                .toSortedSet()
+                .joinToString(Prompts.GRAPH_FIELD_SEP)
+        val sourceId =
+            placeholderSourceIds
+                .getOrDefault(nodeId, mutableListOf())
+                .filter { it.isNotBlank() }
+                .toSet()
+                .joinToString(Prompts.GRAPH_FIELD_SEP)
+        knowledgeGraphInst.upsertNode(
+            nodeId,
+            mapOf(
+                "source_id" to sourceId,
+                "description" to description,
+                "entity_type" to "UNKNOWN",
+            ),
+        )
+    }
 
     val allRelationshipsData =
         coroutineScope {
@@ -453,19 +493,6 @@ private suspend fun mergeEdgesThenUpsert(
             .filter { it.isNotBlank() }
             .toSet()
             .joinToString(Prompts.GRAPH_FIELD_SEP)
-
-    for (needInsertId in listOf(srcId, tgtId)) {
-        if (!knowledgeGraphInst.hasNode(needInsertId)) {
-            knowledgeGraphInst.upsertNode(
-                needInsertId,
-                mapOf(
-                    "source_id" to sourceId,
-                    "description" to description,
-                    "entity_type" to "\"UNKNOWN\"",
-                ),
-            )
-        }
-    }
 
     description = handleEntityRelationSummary("($srcId, $tgtId)", description, globalConfig, llm, language)
     knowledgeGraphInst.upsertEdge(

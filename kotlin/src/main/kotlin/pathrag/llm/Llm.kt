@@ -76,9 +76,10 @@ private fun buildHistoryBlock(historyMessages: List<Map<String, String>>): Strin
  * @param historyMessages Conversation history as a list of maps with keys like `"role"` and `"content"`.
  * @param keywordExtraction When true, request keyword-style output (JSON with keyword arrays) instead of a normal completion.
  * @param maxTokens Optional maximum length (number of characters) to trim the returned stubbed response when the API key is missing.
- * @return The model's text response, a keyword JSON string when `keywordExtraction` is true, a prompt-derived stub if the API key is missing, or `Prompts.FAIL_RESPONSE` after persistent failures.
+ * @return The model's text response, a keyword JSON string when `keywordExtraction` is true, a prompt-derived stub
+ *         if the API key is missing, or `Prompts.FAIL_RESPONSE` after persistent failures.
  */
-@Suppress("TooGenericExceptionCaught")
+@Suppress("TooGenericExceptionCaught", "UnusedParameter")
 suspend fun openAiComplete(
     model: String,
     prompt: String,
@@ -147,7 +148,9 @@ suspend fun openAiComplete(
 /**
  * Produces a completion from an Ollama chat model using the provided inputs.
  *
- * Builds a full prompt from an optional system prompt, an ordered list of history messages (each map expected to contain "role" and "content"), and the user prompt, then calls the configured Ollama model with retry/backoff. The function resolves the model and base URL from the provided `model` argument and environment variables when needed.
+ * Builds a full prompt from an optional system prompt, an ordered list of history messages (each map expected to
+ * contain "role" and "content"), and the user prompt, then calls the configured Ollama model with retry/backoff.
+ * The function resolves the model and base URL from the provided `model` argument and environment variables when needed.
  *
  * @param model The Ollama model name to use; if blank the `OLLAMA_MODEL` environment variable or a default model is used.
  * @param prompt The user prompt to be appended to the constructed conversation.
@@ -159,7 +162,7 @@ suspend fun openAiComplete(
  * @param hashingKv Optional opaque value used for request hashing or deduplication by callers.
  * @return The model's text completion, or the sentinel Prompts.FAIL_RESPONSE if the call fails after retries.
  */
-@Suppress("TooGenericExceptionCaught")
+@Suppress("TooGenericExceptionCaught", "UnusedParameter")
 suspend fun ollamaComplete(
     model: String,
     prompt: String,
@@ -211,7 +214,8 @@ suspend fun ollamaComplete(
  * Generate embeddings for the provided text inputs using the configured OpenAI embedding model.
  *
  * Blank inputs are ignored; for each non-blank input this returns a dense embedding vector as a DoubleArray.
- * If the OPENAI_API_KEY environment variable is not set, returns a deterministic pseudo-random embedding per input seeded by the input text.
+ * If the OPENAI_API_KEY environment variable is not set, returns a deterministic pseudo-random embedding per input
+ * seeded by the input text.
  *
  * @param inputs List of text values to embed; blank entries are filtered out before embedding.
  * @return A list of embedding vectors (one DoubleArray per non-blank input) in the same order as the filtered inputs.
@@ -408,6 +412,7 @@ private fun embeddingModelConfig(): Triple<String, Int, Int> {
  * @param onError Callback invoked for each caught `RuntimeException` with the exception and the zero-based attempt index.
  * @return The successful result of `operation` if any attempt succeeds, or `null` if all attempts throw `RuntimeException`.
  */
+@Suppress("TooGenericExceptionCaught")
 private suspend fun <T> retryWithBackoff(
     maxAttempts: Int,
     backoffMs: Long,

@@ -149,10 +149,12 @@ class NanoVectorDBStorage(
     /**
      * Insert or update vectors and their metadata into the vector store.
      *
-     * Accepts a map of entry id to a property map that must include a "content" value; entries with missing or blank "content" are ignored.
-     * For each kept entry this generates an embedding (via the storage's embedding function) and stores the embedding, the content string, and the entry's metadata filtered by `metaFields`.
+     * Accepts a map of entry id to a property map that must include a "content" value; entries with missing or blank
+     * "content" are ignored. For each kept entry this generates an embedding (via the storage's embedding function)
+     * and stores the embedding, the content string, and the entry's metadata filtered by `metaFields`.
      *
-     * @param data Map from entry id to a map of properties; the property "content" is used as the text to embed and other keys are considered metadata.
+     * @param data Map from entry id to a map of properties; the property "content" is used as the text to embed and other
+     *             keys are considered metadata.
      * @throws IllegalStateException If embedding generation fails.
      */
     @Suppress("TooGenericExceptionCaught")
@@ -338,7 +340,8 @@ class NetworkXStorage(
     /**
      * Insert or update properties for the edge from sourceNodeId to targetNodeId.
      *
-     * Merges the provided `edgeData` into existing edge properties (overwriting any matching keys) or creates the edge if it does not exist. Resets the cached PageRank so ranks will be recomputed on next request.
+     * Merges the provided `edgeData` into existing edge properties (overwriting any matching keys) or creates the edge if
+     * it does not exist. Resets the cached PageRank so ranks will be recomputed on next request.
      *
      * @param sourceNodeId Identifier of the source node.
      * @param targetNodeId Identifier of the target node.
@@ -418,10 +421,12 @@ class NetworkXStorage(
     /**
      * Produce embeddings for all nodes using the specified algorithm.
      *
-     * If `algorithm` equals `"node2vec"` (case-insensitive) Node2Vec-based embeddings are produced; any other value falls back to metadata-based embeddings.
+     * If `algorithm` equals `"node2vec"` (case-insensitive) Node2Vec-based embeddings are produced; any other value
+     * falls back to metadata-based embeddings.
      *
      * @param algorithm The embedding algorithm name (`"node2vec"` or other to select metadata embedding).
-     * @return A pair where the first element is a flattened DoubleArray of embeddings (concatenated per-node vectors) and the second element is the list of node IDs in the same order as the embeddings.
+     * @return A pair where the first element is a flattened DoubleArray of embeddings (concatenated per-node vectors)
+     *         and the second element is the list of node IDs in the same order as the embeddings.
      */
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         val labels = nodes.keys().toList()

@@ -67,7 +67,8 @@ data class ExtraConfig(
      *
      * The resulting map uses snake_case keys for Neo4j and Mongo fields and does not include keys whose values are null.
      *
-     * @return A map of configuration entries containing non-null `neo4j_uri`, `neo4j_user`, `neo4j_password`, `mongo_uri`, and `mongo_database` values, merged with `additional`.
+     * @return A map of configuration entries containing non-null `neo4j_uri`, `neo4j_user`, `neo4j_password`,
+     *         `mongo_uri`, and `mongo_database` values, merged with `additional`.
      */
     fun toMap(): Map<String, Any?> =
         mapOf(
@@ -104,7 +105,8 @@ data class GlobalConfig(
      * (for example: "working_dir", "embedding_func", "llm_model_name", etc.).
      *
      * @param extra Additional entries to merge into the resulting map; entries in `extra` override existing keys on collision.
-     * @return A map of configuration keys to their values, built from this GlobalConfig (including `addon_params` via `addonParams.asConfig()`), merged with `extra`.
+     * @return A map of configuration keys to their values, built from this GlobalConfig
+     *         (including `addon_params` via `addonParams.asConfig()`), merged with `extra`.
      */
     fun toMap(extra: Map<String, Any?> = emptyMap()): Map<String, Any?> =
         mapOf(
@@ -169,7 +171,8 @@ abstract class BaseVectorStorage(
     /**
      * Bulk insert or update vector records in the storage backend.
      *
-     * @param data Map where each key is a record identifier and each value is a map of fields for that record (for example vector and metadata fields).
+     * @param data Map where each key is a record identifier and each value is a map of fields for that record
+     *             (for example vector and metadata fields).
      */
     abstract suspend fun upsert(data: Map<String, Map<String, Any?>>)
 
@@ -234,7 +237,9 @@ abstract class BaseKVStorage<T>(
     /**
      * Retrieve multiple records for the given ids, optionally limiting returned fields.
      *
-     * The returned list preserves the order of `ids`; each element is the record for the corresponding id or `null` if no record exists for that id. When `fields` is provided, implementations should return only the specified fields when supported.
+     * The returned list preserves the order of `ids`; each element is the record for the corresponding id or `null`
+     * if no record exists for that id. When `fields` is provided, implementations should return only the specified fields
+     * when supported.
      *
      * @param ids The list of record identifiers to fetch.
      * @param fields Optional set of field names to include in each returned record; if `null`, all available fields may be returned.
@@ -256,7 +261,8 @@ abstract class BaseKVStorage<T>(
     /**
      * Bulk insert or update records in the storage namespace.
      *
-     * Each entry's key is the record id and the value is the record to store; implementations should create missing records and update existing ones.
+     * Each entry's key is the record id and the value is the record to store; implementations should create missing records
+     * and update existing ones.
      *
      * @param data Map from record id to record value to upsert.
      */
@@ -347,7 +353,8 @@ abstract class BaseGraphStorage(
      * Retrieve edges incident to the specified node.
      *
      * @param sourceNodeId Identifier of the node whose edges should be fetched.
-     * @return A list of pairs where the first element is the adjacent node's id and the second element is the edge id, or `null` if no edges are present.
+     * @return A list of pairs where the first element is the adjacent node's id and the second element is the edge id,
+     *         or `null` if no edges are present.
      */
     abstract suspend fun getNodeEdges(sourceNodeId: String): List<Pair<String, String>>?
 
@@ -355,7 +362,8 @@ abstract class BaseGraphStorage(
      * Retrieve incoming edges for the specified node.
      *
      * @param nodeId The target node identifier.
-     * @return A list of pairs `(sourceNodeId, targetNodeId)` whose `targetNodeId` equals `nodeId`, or `null` if the storage does not expose edges.
+     * @return A list of pairs `(sourceNodeId, targetNodeId)` whose `targetNodeId` equals `nodeId`, or `null` if the storage
+     *         does not expose edges.
      */
     open suspend fun getNodeInEdges(nodeId: String): List<Pair<String, String>>? = edges().filter { it.second == nodeId }
 

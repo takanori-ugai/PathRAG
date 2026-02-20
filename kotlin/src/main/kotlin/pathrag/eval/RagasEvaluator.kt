@@ -1,5 +1,6 @@
 package pathrag.eval
 
+import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -23,7 +24,8 @@ data class RagasSample(
     val question: String,
     val answer: String,
     val contexts: List<String>,
-    val ground_truths: List<String> = emptyList(),
+    @SerialName("ground_truths")
+    val groundTruths: List<String> = emptyList(),
     val metadata: Map<String, String> = emptyMap(),
 )
 
@@ -60,7 +62,7 @@ class RagasEvaluator(
                     question = input.question,
                     answer = answer,
                     contexts = contexts,
-                    ground_truths = input.groundTruths,
+                    groundTruths = input.groundTruths,
                     metadata = metadata,
                 )
             }

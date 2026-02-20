@@ -18,7 +18,7 @@ class RagasMetrics(
         val questionTokens = tokenize(sample.question)
         val answerTokens = tokenize(sample.answer)
         val contextTokens = sample.contexts.map { tokenize(it) }
-        val gtTokens = sample.ground_truths.map { tokenize(it) }
+        val gtTokens = sample.groundTruths.map { tokenize(it) }
 
         val answerRelevancy = jaccard(questionTokens, answerTokens)
         val contextRecall = meanMaxSimilarity(gtTokens, contextTokens)
@@ -31,7 +31,10 @@ class RagasMetrics(
                 maxSimilarity(answerTokens, gtTokens)
             }
         val answerTokenSet = answerTokens
-        val gtTokenSet = gtTokens.fold(emptySet<String>()) { acc, tokens -> acc + tokens }
+        val gtTokenSet =
+            gtTokens.fold(emptySet<String>()) { acc, tokens ->
+                acc + tokens
+            }
         val answerPrecision =
             if (gtTokenSet.isEmpty()) {
                 null
@@ -93,7 +96,7 @@ class RagasMetrics(
     ): Double {
         if (a.isEmpty() || b.isEmpty()) return 0.0
         val intersection = a.intersect(b).size.toDouble()
-        val union = (a.size + b.size - intersection).toDouble()
+        val union = a.size + b.size - intersection
         return if (union == 0.0) 0.0 else intersection / union
     }
 
