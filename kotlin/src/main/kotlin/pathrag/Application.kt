@@ -81,7 +81,8 @@ fun main() {
  * Configures the Ktor Application: installs features, prepares storage and repositories, configures token handling,
  * preloads default data, and registers all HTTP routes used by the application.
  *
- * @param env Environment configuration providing runtime settings (loaded from .env and process environment); defaults to an empty config when not provided.
+ * @param env Environment configuration providing runtime settings (loaded from .env and process environment); defaults
+ *            to an empty config when not provided.
  */
 fun Application.module(env: EnvironmentConfig = EnvironmentConfig.empty()) {
     warnOnMissingRequiredVars(env)
@@ -909,9 +910,11 @@ class DocumentRepository(
     }
 
     /**
-     * Creates a new document record from provided text content, stores the content as a file in the upload directory, and persists the document metadata.
+     * Creates a new document record from provided text content, stores the content as a file in the upload directory,
+     * and persists the document metadata.
      *
-     * The new document is assigned a unique id, its status is set to "processing", and the file is saved using a filename prefixed with the assigned id.
+     * The new document is assigned a unique id, its status is set to "processing", and the file is saved using a filename
+     * prefixed with the assigned id.
      *
      * @param name The original filename to record.
      * @param content The text content to save for the document.
@@ -1099,7 +1102,8 @@ class DocumentRepository(
     /**
      * Deletes all uploaded files and clears all stored document records.
      *
-     * Clears the in-memory document index, resets the next document id to 1, persists the empty state, and removes files from the configured upload directory.
+     * Clears the in-memory document index, resets the next document id to 1, persists the empty state, and removes files
+     * from the configured upload directory.
      *
      * @return The number of files successfully deleted from the upload directory.
      */
@@ -1669,7 +1673,8 @@ class EnvironmentConfig private constructor(
          * surrounding double quotes around values are removed and keys/values are trimmed.
          *
          * @param path Path to the dotenv-style file to load.
-         * @return An EnvironmentConfig containing key/value pairs parsed from the file, or an EnvironmentConfig backed by the system environment if the file is missing.
+         * @return An EnvironmentConfig containing key/value pairs parsed from the file, or an EnvironmentConfig backed
+         *         by the system environment if the file is missing.
          */
         fun load(path: Path): EnvironmentConfig {
             val file = path.toFile()

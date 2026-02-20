@@ -80,7 +80,8 @@ class MongoKVStorage<T : Any>(
      *
      * @param ids The list of document IDs to fetch.
      * @param fields Optional set of field names to project; if provided only these fields (plus `_id`) are returned.
-     * @return A list whose elements correspond to the input `ids`: the mapped value cast to `T` when a document exists, or `null` when it does not.
+     * @return A list whose elements correspond to the input `ids`: the mapped value cast to `T` when a document exists,
+     *         or `null` when it does not.
      */
     override suspend fun getByIds(
         ids: List<String>,
@@ -291,7 +292,8 @@ class MongoVectorStorage(
     /**
      * Removes all vector documents for the given entity from the collection.
      *
-     * Deletes documents whose `_id` matches the MD-hashed id of `entityName` (prefixed with `ent-`) and also deletes documents with `entity_name` equal to `entityName`.
+     * Deletes documents whose `_id` matches the MD-hashed id of `entityName` (prefixed with `ent-`) and also deletes
+     * documents with `entity_name` equal to `entityName`.
      *
      * @param entityName The entity's name used to compute the hashed id and to match the `entity_name` metadata field.
      */
@@ -305,10 +307,13 @@ class MongoVectorStorage(
     /**
      * Deletes all relations involving the given entity.
      *
-     * @param entityName The entity identifier used to match against the `src_id` and `tgt_id` fields; all matching relation documents will be removed.
+     * @param entityName The entity identifier used to match against the `src_id` and `tgt_id` fields; all matching
+     *                   relation documents will be removed.
      */
     override suspend fun deleteRelation(entityName: String) {
-        collection.deleteMany(Filters.or(Filters.eq("src_id", entityName), Filters.eq("tgt_id", entityName)))
+        collection.deleteMany(
+            Filters.or(Filters.eq("src_id", entityName), Filters.eq("tgt_id", entityName)),
+        )
     }
 
     /**
@@ -474,7 +479,8 @@ class MongoGraphStorage(
      *
      * @param sourceNodeId The source node identifier for the edge.
      * @param targetNodeId The target node identifier for the edge.
-     * @param edgeData Additional fields to persist on the edge document; these fields are stored alongside `src`, `tgt`, and the computed `_id`.
+     * @param edgeData Additional fields to persist on the edge document; these fields are stored alongside `src`, `tgt`,
+     *                 and the computed `_id`.
      */
     override suspend fun upsertEdge(
         sourceNodeId: String,
@@ -497,7 +503,8 @@ class MongoGraphStorage(
     /**
      * Deletes the edge document that connects the given source node to the given target node.
      *
-     * Removes a single document where the `src` field equals `sourceNodeId` and the `tgt` field equals `targetNodeId`, if present.
+     * Removes a single document where the `src` field equals `sourceNodeId` and the `tgt` field equals `targetNodeId`,
+     * if present.
      *
      * @param sourceNodeId The ID of the source node (matches the `src` field).
      * @param targetNodeId The ID of the target node (matches the `tgt` field).
@@ -506,17 +513,22 @@ class MongoGraphStorage(
         sourceNodeId: String,
         targetNodeId: String,
     ) {
-        edgeCollection.deleteOne(Filters.and(Filters.eq("src", sourceNodeId), Filters.eq("tgt", targetNodeId)))
+        edgeCollection.deleteOne(
+            Filters.and(Filters.eq("src", sourceNodeId), Filters.eq("tgt", targetNodeId)),
+        )
     }
 
     /**
      * Deletes the node identified by [nodeId] and removes all edges connected to it.
      *
-     * @param nodeId The node identifier; deletes the node document with `_id` equal to this value and all edges where `src` or `tgt` equals this value.
+     * @param nodeId The node identifier; deletes the node document with `_id` equal to this value and all edges where
+     *               `src` or `tgt` equals this value.
      */
     override suspend fun deleteNode(nodeId: String) {
         nodeCollection.deleteOne(Filters.eq("_id", nodeId))
-        edgeCollection.deleteMany(Filters.or(Filters.eq("src", nodeId), Filters.eq("tgt", nodeId)))
+        edgeCollection.deleteMany(
+            Filters.or(Filters.eq("src", nodeId), Filters.eq("tgt", nodeId)),
+        )
     }
 
     /**
@@ -525,7 +537,8 @@ class MongoGraphStorage(
      * Currently supports "node2vec" (case-insensitive); other values fall back to the same metadata-based embedding path.
      *
      * @param algorithm The embedding algorithm name to use.
-     * @return A pair where the first element is a flattened `DoubleArray` containing embedding vectors and the second element is the list of node IDs (labels) corresponding to those embeddings.
+     * @return A pair where the first element is a flattened `DoubleArray` containing embedding vectors and the second
+     *         element is the list of node IDs (labels) corresponding to those embeddings.
      */
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         val labels = nodes()

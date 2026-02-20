@@ -118,8 +118,10 @@ fun computeMdHashId(
  *
  * @param maxSize The maximum number of concurrent executions allowed.
  * @param waitingTimeMillis Reserved for a wait/backoff duration in milliseconds (currently not used by the implementation).
- * @return A function that accepts a suspending no-argument function and returns a suspending function which enforces the specified concurrency limit when invoked.
+ * @return A function that accepts a suspending no-argument function and returns a suspending function which enforces
+ *         the specified concurrency limit when invoked.
  */
+@Suppress("UnusedParameter")
 fun limitAsyncFuncCall(
     maxSize: Int,
     waitingTimeMillis: Long = 1,
@@ -303,6 +305,8 @@ class ResponseCache(
         val embeddingFunc = globalConfig["embedding_func"] as? EmbeddingFunc ?: return null
         val currentEmbedding = embeddingFunc(listOf(prompt)).firstOrNull() ?: return null
         val useLlmCheck = embedCfg["use_llm_check"] as? Boolean ?: false
+
+        @Suppress("UNCHECKED_CAST")
         val llmFunc =
             globalConfig["llm_model_func"] as? suspend (
                 String,

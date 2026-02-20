@@ -356,10 +356,9 @@ class PathRAGTest {
     fun insertSingleAndListWithMockedChatAndEmbeddingModels() =
         runBlocking {
             val chatModel = io.mockk.mockk<ChatModel>()
-            val embeddingModel = io.mockk.mockk<dev.langchain4j.model.embedding.EmbeddingModel>()
             every { chatModel.chat(any<String>()) } answers {
                 val prompt = it.invocation.args[0] as String
-                if (prompt.contains("Extract entities")) {
+                if (prompt.contains("Entity_types:")) {
                     """
                     {
                       "entities": [
@@ -420,7 +419,7 @@ class PathRAGTest {
             val chatModel = io.mockk.mockk<ChatModel>()
             every { chatModel.chat(any<String>()) } answers {
                 val p = it.invocation.args[0] as String
-                if (p.contains("Extract entities")) {
+                if (p.contains("Entity_types:")) {
                     """
                     {
                       "entities": [

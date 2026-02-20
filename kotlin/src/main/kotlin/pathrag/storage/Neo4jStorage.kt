@@ -57,7 +57,8 @@ class Neo4jStorage(
     /**
      * Execute a block within a Neo4j write transaction and return its result.
      *
-     * @param block Lambda that receives a `TransactionContext` and produces a result of type `T`. It is executed inside a write transaction.
+     * @param block Lambda that receives a `TransactionContext` and produces a result of type `T`. It is executed inside
+     *              a write transaction.
      * @return The value produced by the provided `block`.
      */
     private suspend fun <T> write(block: (TransactionContext) -> T): T =
@@ -187,7 +188,8 @@ class Neo4jStorage(
      * Retrieve all incoming edges to the specified node.
      *
      * @param nodeId The identifier of the target node whose incoming edges are fetched.
-     * @return A list of pairs `(src, tgt)` where `src` is the source node id and `tgt` is the target node id (equal to `nodeId`) for each incoming edge.
+     * @return A list of pairs `(src, tgt)` where `src` is the source node id and `tgt` is the target node id (equal to
+     *         `nodeId`) for each incoming edge.
      */
     override suspend fun getNodeInEdges(nodeId: String): List<Pair<String, String>> =
         read { tx ->
@@ -235,11 +237,13 @@ class Neo4jStorage(
     }
 
     /**
-     * Ensure an edge from the given source to target exists, creating the endpoint nodes if missing, and update the relationship's properties.
+     * Ensure an edge from the given source to target exists, creating the endpoint nodes if missing, and update the
+     * relationship's properties.
      *
      * @param sourceNodeId ID of the source node.
      * @param targetNodeId ID of the target node.
-     * @param edgeData Properties to merge onto the relationship; `src_id` and `tgt_id` are set to the corresponding node IDs.
+     * @param edgeData Properties to merge onto the relationship; `src_id` and `tgt_id` are set to the corresponding
+     *                 node IDs.
      */
     override suspend fun upsertEdge(
         sourceNodeId: String,
@@ -329,10 +333,14 @@ class Neo4jStorage(
     /**
      * Produce numeric embeddings for all nodes using the specified algorithm.
      *
-     * If `algorithm` equals "node2vec" (case-insensitive) attempts to compute node2vec embeddings via Neo4j GDS and falls back to a simple PageRank/degree embedding if node2vec is unavailable; for any other algorithm uses a fallback embedding composed of PageRank and node degree.
+     * If `algorithm` equals "node2vec" (case-insensitive) attempts to compute node2vec embeddings via Neo4j GDS and falls
+     * back to a simple PageRank/degree embedding if node2vec is unavailable; for any other algorithm uses a fallback
+     * embedding composed of PageRank and node degree.
      *
      * @param algorithm Name of the embedding algorithm to use (e.g., "node2vec"). Case is ignored.
-     * @return A pair where the first element is a flattened DoubleArray of embeddings (concatenated per-node vectors) and the second element is the list of node ids in the same order as the embeddings. If there are no nodes, returns an empty array and an empty list.
+     * @return A pair where the first element is a flattened DoubleArray of embeddings (concatenated per-node vectors)
+     *         and the second element is the list of node ids in the same order as the embeddings. If there are no nodes,
+     *         returns an empty array and an empty list.
      */
     override suspend fun embedNodes(algorithm: String): Pair<DoubleArray, List<String>> {
         return if (algorithm.lowercase() == "node2vec") {
@@ -352,10 +360,14 @@ class Neo4jStorage(
     }
 
     /**
-     * Compute node embeddings using Neo4j GDS node2vec, falling back to a PageRank/degree-based embedding if node2vec is not available or fails.
+     * Compute node embeddings using Neo4j GDS node2vec, falling back to a PageRank/degree-based embedding if node2vec is
+     * not available or fails.
      *
      * @param dim The embedding dimensionality to request from node2vec.
-     * @return A pair where the first element is a flattened DoubleArray containing the concatenated embedding vectors (ordered by node) and the second element is a List of node ids (as strings) in the same order as the embeddings. The flattened array length will be `labels.size * dim` when node2vec succeeds; fallback embeddings use a 2-dimensional scheme per node.
+     * @return A pair where the first element is a flattened DoubleArray containing the concatenated embedding vectors
+     *         (ordered by node) and the second element is a List of node ids (as strings) in the same order as the
+     *         embeddings. The flattened array length will be `labels.size * dim` when node2vec succeeds; fallback
+     *         embeddings use a 2-dimensional scheme per node.
      */
     @Suppress("TooGenericExceptionCaught")
     private suspend fun runNode2VecGds(dim: Int): Pair<DoubleArray, List<String>> =

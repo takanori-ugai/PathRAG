@@ -2,6 +2,10 @@ package pathrag.operate
 
 import io.github.oshai.kotlinlogging.KotlinLogging
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
@@ -125,63 +129,245 @@ suspend fun extractEntities(
     @Suppress("UNCHECKED_CAST")
     val llm = globalConfig["llm_model_func"] as? LlmFunc ?: return knowledgeGraphInst
 
-    val allEntities = mutableListOf<Map<String, String>>()
-    val allRelationships = mutableListOf<Map<String, Any>>()
+    @Suppress("UNCHECKED_CAST")
+    val addonParams = globalConfig["addon_params"] as? Map<String, Any?> ?: emptyMap()
 
-    for ((chunkId, chunk) in chunks) {
-        val content = chunk["content"]?.toString().orEmpty()
-        if (content.isBlank()) continue
-        val prompt =
-            Prompts.render(
-                Prompts.ENTITY_REL_JSON,
-                mapOf("text" to content),
-            )
-        val maxTokensForExtraction = (globalConfig["max_tokens_for_extraction"] as? Int) ?: 2048
-        val response = llm(prompt, null, emptyList(), false, false, maxTokensForExtraction, null)
-        val payload =
-            runCatching { Json.decodeFromString<ExtractionPayload>(extractJsonPayload(response)) }
-                .onFailure { logger.warn { "Failed to parse LLM extraction for chunk $chunkId: ${it.message}" } }
-                .getOrElse { ExtractionPayload() }
-        val entities = payload.entities.filter { it.entityName.isNotBlank() }
-        val relationships = payload.relationships.filter { it.srcId.isNotBlank() && it.tgtId.isNotBlank() }
+    val language =
+        addonParams["language"]?.toString()?.takeIf { it.isNotBlank() } ?: Prompts.DEFAULT_LANGUAGE
+    val entityTypes =
+        (addonParams["entity_types"] as? List<*>)
+            ?.mapNotNull { it?.toString() }
+            ?.filter { it.isNotBlank() }
+            ?.takeIf { it.isNotEmpty() }
+            ?: Prompts.DEFAULT_ENTITY_TYPES
+    val exampleNumber = (addonParams["example_number"] as? Number)?.toInt()
+    val examples =
+        if (exampleNumber != null && exampleNumber > 0 && exampleNumber < Prompts.ENTITY_EXTRACTION_EXAMPLES.size) {
+            Prompts.ENTITY_EXTRACTION_EXAMPLES.take(exampleNumber).joinToString("\n")
+        } else {
+            Prompts.ENTITY_EXTRACTION_EXAMPLES.joinToString("\n")
+        }
+    val entityExtractMaxGleaning = (globalConfig["entity_extract_max_gleaning"] as? Number)?.toInt() ?: 0
 
-        entities.forEach { ent ->
-            val name = normalizeId(ent.entityName)
-            val entityType = ent.entityType.ifBlank { "UNKNOWN" }
-            val description = ent.description
-            val nodeData =
-                mapOf(
-                    "entity_type" to entityType,
-                    "description" to description,
-                    "source_id" to chunkId,
-                    "entity_name" to name,
-                )
-            allEntities.add(nodeData)
-            runCatching { knowledgeGraphInst.upsertNode(name, nodeData) }
-                .onFailure { logger.error(it) { "Failed to upsert node $name" } }
+    val orderedChunks = chunks.entries.toList()
+    val maxTokensForExtraction = (globalConfig["max_tokens_for_extraction"] as? Int) ?: 2048
+
+    val concurrencyLimit = (globalConfig["max_concurrent_extractions"] as? Number)?.toInt() ?: 16
+    val semaphore = kotlinx.coroutines.sync.Semaphore(concurrencyLimit)
+
+    val results =
+        coroutineScope {
+            orderedChunks
+                .map { entry ->
+                    async(Dispatchers.Default) {
+                        semaphore.withPermit {
+                            val (chunkId, chunk) = entry
+                            val content = chunk["content"]?.toString().orEmpty()
+                            if (content.isBlank()) {
+                                return@withPermit Pair(
+                                    emptyMap<String, List<Map<String, String>>>(),
+                                    emptyMap<Pair<String, String>, List<Map<String, Any?>>>(),
+                                )
+                            }
+                            val prompt =
+                                Prompts.render(
+                                    Prompts.ENTITY_REL_JSON,
+                                    mapOf(
+                                        "text" to content,
+                                        "language" to language,
+                                        "entity_types" to entityTypes.joinToString(", "),
+                                        "examples" to examples,
+                                    ),
+                                )
+                            val response = llm(prompt, null, emptyList(), false, false, maxTokensForExtraction, null)
+
+                            fun decodePayload(raw: String): ExtractionPayload =
+                                runCatching { Json.decodeFromString<ExtractionPayload>(extractJsonPayload(raw)) }
+                                    .onFailure { logger.warn { "Failed to parse LLM extraction for chunk $chunkId: ${it.message}" } }
+                                    .getOrElse { ExtractionPayload() }
+
+                            fun appendHistory(
+                                history: MutableList<Map<String, String>>,
+                                role: String,
+                                message: String,
+                            ) {
+                                history.add(mapOf("role" to role, "content" to message))
+                            }
+
+                            var payload = decodePayload(response)
+                            val history = mutableListOf<Map<String, String>>()
+                            appendHistory(history, "user", prompt)
+                            appendHistory(history, "assistant", response)
+                            if (entityExtractMaxGleaning > 0) {
+                                for (gleanIndex in 0 until entityExtractMaxGleaning) {
+                                    val gleanResponse =
+                                        llm(
+                                            Prompts.ENTITY_CONTINUE_JSON,
+                                            null,
+                                            history,
+                                            false,
+                                            false,
+                                            maxTokensForExtraction,
+                                            null,
+                                        )
+                                    appendHistory(history, "user", Prompts.ENTITY_CONTINUE_JSON)
+                                    appendHistory(history, "assistant", gleanResponse)
+                                    val gleanPayload = decodePayload(gleanResponse)
+                                    payload =
+                                        ExtractionPayload(
+                                            entities = payload.entities + gleanPayload.entities,
+                                            relationships = payload.relationships + gleanPayload.relationships,
+                                        )
+
+                                    if (gleanIndex == entityExtractMaxGleaning - 1) break
+                                    val ifLoopResponse =
+                                        llm(
+                                            Prompts.ENTITY_IF_LOOP_JSON,
+                                            null,
+                                            history,
+                                            false,
+                                            false,
+                                            maxTokensForExtraction,
+                                            null,
+                                        ).trim().trim('"', '\'').lowercase()
+                                    appendHistory(history, "user", Prompts.ENTITY_IF_LOOP_JSON)
+                                    appendHistory(history, "assistant", ifLoopResponse)
+                                    if (ifLoopResponse != "yes") break
+                                }
+                            }
+
+                            val entities = payload.entities.filter { it.entityName.isNotBlank() }
+                            val relationships = payload.relationships.filter { it.srcId.isNotBlank() && it.tgtId.isNotBlank() }
+
+                            val nodes =
+                                entities
+                                    .mapNotNull { ent ->
+                                        val name = normalizeId(ent.entityName)
+                                        if (name.isBlank()) return@mapNotNull null
+                                        val entityType = ent.entityType.ifBlank { "UNKNOWN" }.uppercase()
+                                        mapOf(
+                                            "entity_type" to entityType,
+                                            "description" to ent.description,
+                                            "source_id" to chunkId,
+                                            "entity_name" to name,
+                                        )
+                                    }.groupBy { it["entity_name"].orEmpty() }
+
+                            val edges =
+                                relationships
+                                    .mapNotNull { rel ->
+                                        val src = normalizeId(rel.srcId)
+                                        val tgt = normalizeId(rel.tgtId)
+                                        if (src.isBlank() || tgt.isBlank()) return@mapNotNull null
+                                        mapOf(
+                                            "src_id" to src,
+                                            "tgt_id" to tgt,
+                                            "weight" to rel.weight,
+                                            "description" to rel.description,
+                                            "keywords" to rel.keywords,
+                                            "source_id" to chunkId,
+                                        )
+                                    }.groupBy {
+                                        Pair(
+                                            it["src_id"]?.toString().orEmpty(),
+                                            it["tgt_id"]?.toString().orEmpty(),
+                                        )
+                                    }
+
+                            Pair(nodes, edges)
+                        }
+                    }
+                }.awaitAll()
         }
 
-        relationships.forEach { rel ->
-            val src = normalizeId(rel.srcId)
-            val tgt = normalizeId(rel.tgtId)
-            val description = rel.description
-            val keywords = rel.keywords
-            val edgeData =
-                mapOf(
-                    "weight" to rel.weight,
-                    "description" to description,
-                    "keywords" to keywords,
-                    "source_id" to chunkId,
-                )
-            allRelationships.add(mapOf("src_id" to src, "tgt_id" to tgt) + edgeData)
-            runCatching { knowledgeGraphInst.upsertEdge(src, tgt, edgeData) }
-                .onFailure { logger.error(it) { "Failed to upsert edge $src -> $tgt" } }
+    val maybeNodes = mutableMapOf<String, MutableList<Map<String, String>>>()
+    val maybeEdges = mutableMapOf<Pair<String, String>, MutableList<Map<String, Any?>>>()
+    for ((nodes, edges) in results) {
+        nodes.forEach { (k, v) ->
+            if (k.isBlank()) return@forEach
+            val bucket = maybeNodes.getOrPut(k) { mutableListOf() }
+            bucket.addAll(v)
+        }
+        edges.forEach { (k, v) ->
+            if (k.first.isBlank() || k.second.isBlank()) return@forEach
+            val bucket = maybeEdges.getOrPut(k) { mutableListOf() }
+            bucket.addAll(v)
         }
     }
 
-    if (allEntities.isNotEmpty()) {
+    val allEntitiesData =
+        coroutineScope {
+            maybeNodes
+                .map { (name, data) ->
+                    async(Dispatchers.Default) {
+                        mergeNodesThenUpsert(name, data, knowledgeGraphInst, globalConfig, llm, language)
+                    }
+                }.awaitAll()
+        }
+
+    val placeholderDescriptions = mutableMapOf<String, MutableList<String>>()
+    val placeholderSourceIds = mutableMapOf<String, MutableList<String>>()
+    for ((key, data) in maybeEdges) {
+        val descriptions =
+            data
+                .mapNotNull { it["description"]?.toString() }
+                .filter { it.isNotBlank() }
+        val sourceIds =
+            data
+                .mapNotNull { it["source_id"]?.toString() }
+                .filter { it.isNotBlank() }
+        for (nodeId in listOf(key.first, key.second)) {
+            placeholderDescriptions.getOrPut(nodeId) { mutableListOf() }.addAll(descriptions)
+            placeholderSourceIds.getOrPut(nodeId) { mutableListOf() }.addAll(sourceIds)
+        }
+    }
+
+    val placeholderNodeIds = (placeholderDescriptions.keys + placeholderSourceIds.keys).toSet()
+    for (nodeId in placeholderNodeIds) {
+        if (knowledgeGraphInst.getNode(nodeId) != null) continue
+        val description =
+            placeholderDescriptions
+                .getOrDefault(nodeId, mutableListOf())
+                .filter { it.isNotBlank() }
+                .toSortedSet()
+                .joinToString(Prompts.GRAPH_FIELD_SEP)
+        val sourceId =
+            placeholderSourceIds
+                .getOrDefault(nodeId, mutableListOf())
+                .filter { it.isNotBlank() }
+                .toSet()
+                .joinToString(Prompts.GRAPH_FIELD_SEP)
+        knowledgeGraphInst.upsertNode(
+            nodeId,
+            mapOf(
+                "source_id" to sourceId,
+                "description" to description,
+                "entity_type" to "UNKNOWN",
+            ),
+        )
+    }
+
+    val allRelationshipsData =
+        coroutineScope {
+            maybeEdges
+                .map { (key, data) ->
+                    async(Dispatchers.Default) {
+                        mergeEdgesThenUpsert(key.first, key.second, data, knowledgeGraphInst, globalConfig, llm, language)
+                    }
+                }.awaitAll()
+        }
+
+    if (allEntitiesData.isEmpty() && allRelationshipsData.isEmpty()) {
+        logger.warn { "Didn't extract any entities and relationships, maybe your LLM is not working" }
+        return knowledgeGraphInst
+    }
+
+    if (allEntitiesData.isEmpty()) logger.warn { "Didn't extract any entities" }
+    if (allRelationshipsData.isEmpty()) logger.warn { "Didn't extract any relationships" }
+
+    if (allEntitiesData.isNotEmpty()) {
         val toStore =
-            allEntities
+            allEntitiesData
                 .mapNotNull { ent ->
                     val entityName = ent["entity_name"] ?: return@mapNotNull null
                     val id = computeMdHashId(entityName, prefix = "ent-")
@@ -196,9 +382,9 @@ suspend fun extractEntities(
             .onFailure { logger.error(it) { "Failed to upsert ${toStore.size} entities into VDB" } }
     }
 
-    if (allRelationships.isNotEmpty()) {
+    if (allRelationshipsData.isNotEmpty()) {
         val toStore =
-            allRelationships
+            allRelationshipsData
                 .mapNotNull { edge ->
                     val src = edge["src_id"]?.toString() ?: return@mapNotNull null
                     val tgt = edge["tgt_id"]?.toString() ?: return@mapNotNull null
@@ -221,6 +407,152 @@ suspend fun extractEntities(
 
     return knowledgeGraphInst
 }
+
+private suspend fun mergeNodesThenUpsert(
+    entityName: String,
+    nodesData: List<Map<String, String>>,
+    knowledgeGraphInst: BaseGraphStorage,
+    globalConfig: Map<String, Any?>,
+    llm: LlmFunc,
+    language: String,
+): Map<String, String> {
+    val alreadyEntityTypes = mutableListOf<String>()
+    val alreadySourceIds = mutableListOf<String>()
+    val alreadyDescriptions = mutableListOf<String>()
+
+    val alreadyNode = knowledgeGraphInst.getNode(entityName)
+    if (alreadyNode != null) {
+        alreadyEntityTypes.add(alreadyNode["entity_type"]?.toString().orEmpty())
+        alreadySourceIds.addAll(splitBySep(alreadyNode["source_id"]?.toString().orEmpty(), Prompts.GRAPH_FIELD_SEP))
+        alreadyDescriptions.add(alreadyNode["description"]?.toString().orEmpty())
+    }
+
+    val entityType =
+        (nodesData.mapNotNull { it["entity_type"] } + alreadyEntityTypes)
+            .groupingBy { it }
+            .eachCount()
+            .maxByOrNull { it.value }
+            ?.key
+            .orEmpty()
+            .ifBlank { "UNKNOWN" }
+    var description =
+        (nodesData.mapNotNull { it["description"] } + alreadyDescriptions)
+            .filter { it.isNotBlank() }
+            .toSortedSet()
+            .joinToString(Prompts.GRAPH_FIELD_SEP)
+    val sourceId =
+        (nodesData.mapNotNull { it["source_id"] } + alreadySourceIds)
+            .filter { it.isNotBlank() }
+            .toSet()
+            .joinToString(Prompts.GRAPH_FIELD_SEP)
+    description = handleEntityRelationSummary(entityName, description, globalConfig, llm, language)
+
+    val nodeData =
+        mapOf(
+            "entity_type" to entityType,
+            "description" to description,
+            "source_id" to sourceId,
+        )
+    knowledgeGraphInst.upsertNode(entityName, nodeData)
+    return nodeData + mapOf("entity_name" to entityName)
+}
+
+private suspend fun mergeEdgesThenUpsert(
+    srcId: String,
+    tgtId: String,
+    edgesData: List<Map<String, Any?>>,
+    knowledgeGraphInst: BaseGraphStorage,
+    globalConfig: Map<String, Any?>,
+    llm: LlmFunc,
+    language: String,
+): Map<String, Any?> {
+    val alreadyWeights = mutableListOf<Double>()
+    val alreadySourceIds = mutableListOf<String>()
+    val alreadyDescriptions = mutableListOf<String>()
+    val alreadyKeywords = mutableListOf<String>()
+
+    val alreadyEdge = knowledgeGraphInst.getEdge(srcId, tgtId)
+    if (alreadyEdge != null) {
+        alreadyWeights.add((alreadyEdge["weight"] as? Number)?.toDouble() ?: 0.0)
+        alreadySourceIds.addAll(splitBySep(alreadyEdge["source_id"]?.toString().orEmpty(), Prompts.GRAPH_FIELD_SEP))
+        alreadyDescriptions.add(alreadyEdge["description"]?.toString().orEmpty())
+        alreadyKeywords.addAll(splitBySep(alreadyEdge["keywords"]?.toString().orEmpty(), Prompts.GRAPH_FIELD_SEP))
+    }
+
+    val weight =
+        edgesData.mapNotNull { (it["weight"] as? Number)?.toDouble() } + alreadyWeights
+    var description =
+        (edgesData.mapNotNull { it["description"]?.toString() } + alreadyDescriptions)
+            .filter { it.isNotBlank() }
+            .toSortedSet()
+            .joinToString(Prompts.GRAPH_FIELD_SEP)
+    val keywords =
+        (edgesData.mapNotNull { it["keywords"]?.toString() } + alreadyKeywords)
+            .filter { it.isNotBlank() }
+            .toSortedSet()
+            .joinToString(Prompts.GRAPH_FIELD_SEP)
+    val sourceId =
+        (edgesData.mapNotNull { it["source_id"]?.toString() } + alreadySourceIds)
+            .filter { it.isNotBlank() }
+            .toSet()
+            .joinToString(Prompts.GRAPH_FIELD_SEP)
+
+    description = handleEntityRelationSummary("($srcId, $tgtId)", description, globalConfig, llm, language)
+    knowledgeGraphInst.upsertEdge(
+        srcId,
+        tgtId,
+        mapOf(
+            "weight" to weight.sum(),
+            "description" to description,
+            "keywords" to keywords,
+            "source_id" to sourceId,
+        ),
+    )
+
+    return mapOf(
+        "src_id" to srcId,
+        "tgt_id" to tgtId,
+        "description" to description,
+        "keywords" to keywords,
+        "source_id" to sourceId,
+        "weight" to weight.sum(),
+    )
+}
+
+private suspend fun handleEntityRelationSummary(
+    entityOrRelationName: String,
+    description: String,
+    globalConfig: Map<String, Any?>,
+    llm: LlmFunc,
+    language: String,
+): String {
+    if (description.isBlank()) return description
+    val llmMaxTokens = (globalConfig["llm_model_max_token_size"] as? Number)?.toInt() ?: 32768
+    val tiktokenModelName = globalConfig["tiktoken_model_name"]?.toString()?.ifBlank { "gpt-4o-mini" } ?: "gpt-4o-mini"
+    val summaryMaxTokens = (globalConfig["entity_summary_to_max_tokens"] as? Number)?.toInt() ?: 500
+
+    val tokens = Tokenizer.encode(description, tiktokenModelName)
+    if (tokens.size < summaryMaxTokens) return description
+    val useDescription = Tokenizer.decode(tokens.take(llmMaxTokens), tiktokenModelName)
+    val context =
+        mapOf(
+            "entity_name" to entityOrRelationName,
+            "description_list" to splitBySep(useDescription, Prompts.GRAPH_FIELD_SEP).toString(),
+            "language" to language,
+        )
+    val prompt = Prompts.render(Prompts.SUMMARIZE_ENTITY_DESCRIPTIONS, context)
+    logger.debug { "Trigger summary: $entityOrRelationName" }
+    return llm(prompt, null, emptyList(), false, false, summaryMaxTokens, null)
+}
+
+private fun splitBySep(
+    value: String,
+    sep: String,
+): List<String> =
+    value
+        .split(sep)
+        .map { it.trim() }
+        .filter { it.isNotBlank() }
 
 private fun extractJsonPayload(response: String): String {
     val trimmed = response.trim()
@@ -920,14 +1252,12 @@ private suspend fun extractKeywords(
     }
 
     val examples = (globalConfig["keywords_examples"] as? String).orEmpty()
-    val language = (globalConfig["language"] as? String) ?: Prompts.DEFAULT_LANGUAGE
     val prompt =
         Prompts.render(
             Prompts.KEYWORDS_EXTRACTION,
             mapOf(
                 "query" to query,
                 "examples" to examples,
-                "language" to language,
             ),
         )
     val raw = llmModel(prompt, null, emptyList(), true, false, 512, null)

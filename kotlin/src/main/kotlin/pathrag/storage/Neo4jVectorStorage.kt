@@ -69,11 +69,13 @@ class Neo4jVectorStorage(
         withContext(Dispatchers.IO) { driver.session().use { session -> session.executeWrite { tx -> block(tx) } } }
 
     /**
-     * Find the most relevant stored vectors for the given text, preferring a Neo4j vector index and falling back to client-side cosine scoring.
+     * Find the most relevant stored vectors for the given text, preferring a Neo4j vector index and falling back to
+     * client-side cosine scoring.
      *
      * @param query The text query to embed and search.
      * @param topK Maximum number of results to return.
-     * @return A list of result maps, each containing `content`, `score`, and any persisted metadata fields; results are ordered by descending `score` and limited to `topK`.
+     * @return A list of result maps, each containing `content`, `score`, and any persisted metadata fields; results are
+     *         ordered by descending `score` and limited to `topK`.
      */
     @Suppress("TooGenericExceptionCaught")
     override suspend fun query(
@@ -108,7 +110,12 @@ class Neo4jVectorStorage(
             .mapNotNull { entry ->
                 val emb = entry["embedding"] as? DoubleArray ?: return@mapNotNull null
                 val content = entry["content"] as? String ?: ""
-                val meta = entry["meta"] as? Map<String, Any?> ?: emptyMap()
+                val meta =
+                    (entry["meta"] as? Map<*, *>)
+                        ?.mapNotNull { (key, value) ->
+                            (key as? String)?.let { it to value }
+                        }?.toMap()
+                        ?: emptyMap()
                 val score = cosineSimilarity(queryEmbedding, emb)
                 mapOf("content" to content, "score" to score) + meta
             }.sortedByDescending { (it["score"] as? Double) ?: 0.0 }
@@ -188,7 +195,8 @@ class Neo4jVectorStorage(
     /**
      * Deletes the vector node representing the relationship between two entities.
      *
-     * Removes any vector whose id equals the computed relation id for the pair or whose `src_id` and `tgt_id` properties match the provided ids.
+     * Removes any vector whose id equals the computed relation id for the pair or whose `src_id` and `tgt_id` properties
+     * match the provided ids.
      *
      * @param srcId The source entity id.
      * @param tgtId The target entity id.
