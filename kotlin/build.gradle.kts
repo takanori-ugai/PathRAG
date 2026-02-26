@@ -82,8 +82,8 @@ dependencies {
     implementation("com.knuddels:jtokkit:1.1.0")
 
     // MongoDB
-    implementation("org.mongodb:mongodb-driver-kotlin-coroutine:5.1.0")
-    implementation("org.mongodb:bson-kotlinx:5.1.0")
+    implementation("org.mongodb:mongodb-driver-kotlin-coroutine:5.6.4")
+    implementation("org.mongodb:bson-kotlinx:5.6.4")
     implementation("org.neo4j.driver:neo4j-java-driver:5.20.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.3.0")
