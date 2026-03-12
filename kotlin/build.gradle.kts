@@ -72,7 +72,7 @@ dependencies {
     implementation("dev.langchain4j:langchain4j:1.11.0")
     implementation("dev.langchain4j:langchain4j-open-ai:1.11.0")
     implementation("dev.langchain4j:langchain4j-ollama:1.11.0")
-    implementation("dev.langchain4j:langchain4j-community-neo4j:1.11.0-beta19")
+    implementation("dev.langchain4j:langchain4j-community-neo4j:1.12.1-beta21")
 
     implementation("org.openjfx:javafx-base:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-graphics:$javafxVersion:$javafxPlatform")
