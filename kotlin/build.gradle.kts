@@ -6,7 +6,7 @@ plugins {
     application
     id("com.gradleup.shadow") version "9.4.0"
     kotlin("plugin.serialization") version "2.3.0"
-    id("org.jlleitschuh.gradle.ktlint") version "14.1.0"
+    id("org.jlleitschuh.gradle.ktlint") version "14.2.0"
     id("io.gitlab.arturbosch.detekt") version "1.23.8"
 }
 
