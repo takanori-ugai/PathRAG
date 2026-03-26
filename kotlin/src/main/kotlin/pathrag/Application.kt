@@ -33,7 +33,7 @@ import io.ktor.server.routing.post
 import io.ktor.server.routing.put
 import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
-import io.ktor.utils.io.core.readBytes
+import io.ktor.utils.io.toByteArray
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -1413,7 +1413,7 @@ private fun Route.documentRoutes(
                 return@post
             }
             val doc = repository.add(req.name, req.content, req.contentType ?: "text/plain", currentUser.id)
-            launch {
+            call.application.launch {
                 runCatching { rag.ainsert(req.content) }
                     .onSuccess { repository.markProcessed(doc.id) }
                     .onFailure { ex ->
@@ -1447,11 +1447,11 @@ private fun Route.documentRoutes(
                                 )
                                 return@post
                             }
-                            val bytes = withContext(Dispatchers.IO) { part.provider().readBytes() }
+                            val bytes = withContext(Dispatchers.IO) { part.provider().toByteArray() }
                             val filename = part.originalFileName ?: "upload_${System.currentTimeMillis()}"
                             val saved = repository.addFile(filename, bytes, contentType?.toString(), currentUser.id)
                             savedDocs.add(saved)
-                            launch {
+                            call.application.launch {
                                 runCatching {
                                     val charset = contentType?.charset() ?: StandardCharsets.UTF_8
                                     val text = String(bytes, charset)
