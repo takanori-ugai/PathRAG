@@ -2,7 +2,7 @@ import org.jlleitschuh.gradle.ktlint.reporter.ReporterType
 import java.io.File
 
 plugins {
-    kotlin("jvm") version "2.3.20"
+    kotlin("jvm") version "2.3.21"
     application
     id("com.gradleup.shadow") version "9.4.1"
     kotlin("plugin.serialization") version "2.3.20"
