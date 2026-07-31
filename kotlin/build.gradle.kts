@@ -56,7 +56,7 @@ dependencies {
     implementation("io.ktor:ktor-serialization-kotlinx-json")
     implementation("io.ktor:ktor-server-swagger")
     implementation("io.ktor:ktor-server-cors")
-    implementation("ch.qos.logback:logback-classic:1.5.38")
+    implementation("ch.qos.logback:logback-classic:1.6.1")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.11.0")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.11.0")
     implementation("io.github.oshai:kotlin-logging-jvm:8.0.4")
@@ -72,7 +72,7 @@ dependencies {
     implementation("dev.langchain4j:langchain4j:1.18.1")
     implementation("dev.langchain4j:langchain4j-open-ai:1.18.1")
     implementation("dev.langchain4j:langchain4j-ollama:1.18.1")
-    implementation("dev.langchain4j:langchain4j-community-neo4j:1.18.1-beta28")
+    implementation("dev.langchain4j:langchain4j-community-neo4j:1.18.0-beta28")
 
     implementation("org.openjfx:javafx-base:$javafxVersion:$javafxPlatform")
     implementation("org.openjfx:javafx-graphics:$javafxVersion:$javafxPlatform")
