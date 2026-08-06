@@ -18,7 +18,7 @@ detekt {
 group = "com.pathrag"
 version = "0.0.1"
 
-val ktorVersion = "3.5.1"
+val ktorVersion = "3.5.2"
 val koinVersion = "4.2.2"
 val javafxVersion = "21.0.5"
 val osName = System.getProperty("os.name").lowercase()
