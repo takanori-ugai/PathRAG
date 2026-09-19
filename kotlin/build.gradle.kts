@@ -86,7 +86,7 @@ dependencies {
     implementation("org.mongodb:bson-kotlinx:5.11.1")
     implementation("org.neo4j.driver:neo4j-java-driver:6.2.1")
 
-    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.4.10")
+    testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.4.20")
     testImplementation("io.mockk:mockk:1.14.11")
 }
 
