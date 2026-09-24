@@ -69,9 +69,9 @@ dependencies {
     implementation("io.insert-koin:koin-logger-slf4j:$koinVersion")
 
     // LangChain4j dependencies
-    implementation("dev.langchain4j:langchain4j:1.19.2")
-    implementation("dev.langchain4j:langchain4j-open-ai:1.19.2")
-    implementation("dev.langchain4j:langchain4j-ollama:1.19.2")
+    implementation("dev.langchain4j:langchain4j:1.20.0")
+    implementation("dev.langchain4j:langchain4j-open-ai:1.20.0")
+    implementation("dev.langchain4j:langchain4j-ollama:1.20.0")
     implementation("dev.langchain4j:langchain4j-community-neo4j:1.20.0-beta30")
 
     implementation("org.openjfx:javafx-base:$javafxVersion:$javafxPlatform")
