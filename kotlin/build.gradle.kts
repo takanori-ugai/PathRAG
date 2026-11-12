@@ -87,7 +87,7 @@ dependencies {
     implementation("org.neo4j.driver:neo4j-java-driver:6.3.0")
 
     testImplementation("org.jetbrains.kotlin:kotlin-test-junit:2.4.21")
-    testImplementation("io.mockk:mockk:1.14.11")
+    testImplementation("io.mockk:mockk:1.14.12")
 }
 
 tasks {
